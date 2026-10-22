@@ -1,0 +1,11 @@
+[
+  {
+    "source": "opensearch",
+    "environment": "local",
+    "entity": "demo-logs-*",
+    "kind": "mapping",
+    "title": "Logs de la demo",
+    "content": "Índices diarios demo-logs-AAAA.MM.DD con @timestamp, level, service y message.",
+    "topics": ["logs", "demo"]
+  }
+]

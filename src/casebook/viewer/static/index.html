@@ -1,0 +1,334 @@
+<!doctype html>
+<html lang="es">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>Dev Support Viewer</title>
+  <link rel="stylesheet" href="/static/styles.css">
+</head>
+<body>
+  <aside class="sidebar">
+    <header class="brand">
+      <span class="dot" id="conn" title="Conexión con el servidor"></span>
+      <h1>casebook</h1>
+      <span class="version" id="version"></span>
+    </header>
+
+    <nav class="nav" aria-label="Secciones">
+      <a href="#/sessions" class="nav-item" data-view="sessions" aria-current="page">
+        <span class="nav-icon" data-icon="sessions" aria-hidden="true"></span>
+        <span class="nav-label">Sesiones</span>
+        <span class="nav-count" id="session-count"></span>
+      </a>
+      <a href="#/knowledge" class="nav-item" data-view="knowledge">
+        <span class="nav-icon" data-icon="db" aria-hidden="true"></span>
+        <span class="nav-label">Conocimiento</span>
+      </a>
+      <a href="#/skills" class="nav-item" data-view="skills">
+        <span class="nav-icon" data-icon="skills" aria-hidden="true"></span>
+        <span class="nav-label">Skills</span>
+        <span class="nav-badge" id="skills-badge" hidden></span>
+      </a>
+      <a href="#/settings" class="nav-item" data-view="settings">
+        <span class="nav-icon" data-icon="settings" aria-hidden="true"></span>
+        <span class="nav-label">Ajustes</span>
+      </a>
+    </nav>
+
+    <hr class="divider">
+
+    <div class="sessions-side" id="sessions-side">
+    <input type="search" id="search" class="search" placeholder="Buscar en todas las sesiones" aria-label="Buscar en todas las sesiones">
+    <div class="session-filters">
+      <div class="seg" role="group" aria-label="Origen de la sesión">
+        <button class="seg-btn" data-origin="all" aria-pressed="true"><span>Todas</span><span class="count"></span></button>
+        <button class="seg-btn" data-origin="card" aria-pressed="false"><span class="label">Cards</span><span class="count"></span></button>
+        <button class="seg-btn" data-origin="slack" aria-pressed="false"><span class="btn-icon" data-icon="slack" aria-hidden="true"></span><span>Slack</span><span class="count"></span></button>
+      </div>
+      <div class="refine" role="group" aria-label="Refinar">
+        <button class="chip-toggle" data-refine="errors" aria-pressed="false"><span class="btn-icon" data-icon="warn" aria-hidden="true"></span>Con errores</button>
+        <button class="chip-toggle" data-refine="week" aria-pressed="false"><span class="btn-icon" data-icon="clock" aria-hidden="true"></span>Esta semana</button>
+      </div>
+    </div>
+    <nav id="sessions" aria-label="Sesiones"></nav>
+    <div class="pager" id="session-pager" hidden>
+      <button class="ghost" id="pager-prev" aria-label="Página anterior">‹</button>
+      <span id="pager-info" aria-live="polite"></span>
+      <button class="ghost" id="pager-next" aria-label="Página siguiente">›</button>
+    </div>
+    <nav id="search-results" aria-label="Resultados de búsqueda" hidden></nav>
+    <label class="follow"><input type="checkbox" id="follow" checked> Seguir la sesión activa</label>
+    </div>
+
+    <section class="conn-panel slack-panel" id="slack-panel" aria-labelledby="slack-title" hidden>
+      <div class="conn-head">
+        <h2 id="slack-title">Slack</h2>
+        <span class="conn-when" id="slack-when"></span>
+        <button class="switch" role="switch" id="slack-toggle" aria-checked="false" aria-label="Vigilar el canal de soporte"></button>
+      </div>
+      <p class="slack-status" id="slack-status" aria-live="polite"></p>
+      <div id="slack-alert"></div>
+      <button class="slack-latest" id="slack-latest"><span class="btn-icon" data-icon="spark" aria-hidden="true"></span><span class="label">Analizar el último mensaje</span></button>
+      <div class="slack-status" id="slack-manual" aria-live="polite" hidden></div>
+      <ul class="slack-recent" id="slack-recent"></ul>
+    </section>
+
+    <section class="conn-panel" aria-labelledby="conn-title">
+      <div class="conn-head">
+        <h2 id="conn-title">Conexiones</h2>
+        <span class="conn-when" id="conn-when"></span>
+        <button class="icon-btn" id="recheck" title="Revisar las conexiones ahora" aria-label="Revisar las conexiones ahora"></button>
+      </div>
+      <ul class="conn-list" id="conn-list"><li class="conn-empty">Sin chequeos todavía.</li></ul>
+    </section>
+  </aside>
+
+  <main>
+    <section id="onboarding-welcome" class="guide-welcome" aria-labelledby="guide-welcome-title" hidden>
+      <div><h2 id="guide-welcome-title">Tu primera investigación, paso a paso</h2>
+      <p>Recorre el visor con un caso de ejemplo: cómo llegan las consultas, lo que cuestan y dónde queda la respuesta. Tus sesiones vuelven al terminar.</p></div>
+      <button id="onboarding-start" class="primary">Empezar guía</button>
+      <button id="onboarding-dismiss" class="ghost">Ahora no</button>
+    </section>
+    <div id="sessions-view">
+    <header class="session-head" id="session-head">
+      <p class="empty">Todavía no hay sesiones. Pídele a Claude que investigue un caso, por ejemplo: «Investiga <span class="card-example">CASO-1234</span>». Aquí verás las consultas y los hallazgos.</p>
+    </header>
+    <div class="session-body">
+      <div class="timeline-col">
+        <p class="filtered-empty" id="filtered-empty" hidden>Ninguna tarjeta coincide con el filtro.</p>
+        <ol class="timeline" id="timeline"></ol>
+      </div>
+      <aside class="summary" id="summary" aria-label="Resumen de la sesión" hidden>
+        <section class="panel" id="sum-notes" hidden>
+          <h2>Conclusiones</h2>
+          <ul class="sum-notes"></ul>
+        </section>
+        <section class="panel" id="sum-draft" hidden>
+          <h2>Borrador para <span class="draft-card"></span></h2>
+          <p class="sum-draft-text"></p>
+          <div class="sum-actions">
+            <button class="copy-draft"><span class="btn-icon" data-icon="copy" aria-hidden="true"></span><span>Copiar</span></button>
+            <button class="ghost see-draft">Ver completo</button>
+          </div>
+        </section>
+        <section class="panel" id="sum-sources" hidden>
+          <h2>Fuentes consultadas</h2>
+          <ul class="sum-sources"></ul>
+        </section>
+      </aside>
+    </div>
+    </div>
+
+    <div id="skills-view" class="skills-view" hidden>
+      <div class="skills-list">
+        <div class="skills-head">
+          <h2>Skills</h2>
+          <button class="skills-reload"><span class="btn-icon" data-icon="refresh" aria-hidden="true"></span><span>Revisar</span></button>
+        </div>
+        <p class="skills-intro"></p>
+        <input type="search" class="search skills-filter" placeholder="Filtrar skills" aria-label="Filtrar skills">
+        <div class="skills-groups"></div>
+      </div>
+      <article class="skill-detail panel" aria-live="polite"></article>
+    </div>
+
+    <div id="settings-view" class="settings-view" hidden>
+      <nav class="settings-nav" aria-label="Secciones de ajustes">
+        <h2>Ajustes</h2>
+        <div class="settings-links"></div>
+        <p class="settings-path"></p>
+      </nav>
+      <div class="settings-col">
+        <p class="settings-error" hidden></p>
+        <div class="settings-sections"></div>
+        <div class="savebar" hidden>
+          <span class="dot"></span>
+          <strong class="save-count"></strong>
+          <span class="save-note">Se escriben en config.toml y el servidor los toma en la próxima consulta.</span>
+          <span class="spacer"></span>
+          <button class="ghost save-diff" aria-expanded="false">Ver cambios</button>
+          <button class="save-discard">Descartar</button>
+          <button class="primary save-apply">Guardar</button>
+          <ul class="save-list" hidden></ul>
+          <p class="save-error" hidden></p>
+        </div>
+      </div>
+    </div>
+    <section id="knowledge-view" hidden aria-labelledby="knowledge-title">
+      <header class="knowledge-head">
+        <div><h2 id="knowledge-title">Conocimiento</h2><p>Lo aprendido entre investigaciones, con su evidencia y fecha de verificación.</p></div>
+        <button id="knowledge-import">Importar esquemas de sesiones</button>
+        <button id="knowledge-reload">Actualizar</button>
+      </header>
+      <form id="knowledge-filters" class="knowledge-filters">
+        <label>Buscar<input name="q" type="search" placeholder="Tabla, campo o concepto"></label>
+        <label>Fuente<select name="source"><option value="">Todas</option><option value="mysql">MySQL</option><option value="opensearch">OpenSearch</option><option value="cloudwatch">CloudWatch</option><option value="code">Código</option></select></label>
+        <label>Entorno<input name="environment" placeholder="prod/app"></label>
+        <label>Tema<input name="topic" placeholder="ventas, clicks…"></label>
+        <label>Estado<select name="status"><option value="">Todos</option><option value="verified">Verificado</option><option value="pending">Por verificar</option><option value="stale">Desactualizado</option></select></label>
+        <button type="submit">Buscar</button>
+      </form>
+      <p id="knowledge-message" role="status" aria-live="polite"></p>
+      <div class="knowledge-layout">
+        <div>
+          <div class="knowledge-list-toolbar">
+            <p id="knowledge-count" aria-live="polite"></p>
+            <nav class="knowledge-pagination" aria-label="Páginas de conocimiento">
+              <button id="knowledge-prev" aria-label="Página anterior" title="Página anterior" disabled>‹</button>
+              <span id="knowledge-page" aria-live="polite">Página 1 de 1</span>
+              <button id="knowledge-next" aria-label="Página siguiente" title="Página siguiente" disabled>›</button>
+            </nav>
+          </div>
+          <nav id="knowledge-list" aria-label="Entradas de conocimiento"></nav>
+        </div>
+        <article id="knowledge-detail" aria-label="Detalle del conocimiento"><p class="empty">Selecciona una entrada para ver su contenido y evidencia.</p></article>
+      </div>
+    </section>
+  </main>
+
+  <dialog id="card-modal" class="card-modal" aria-label="Consulta citada">
+    <div class="modal-bar">
+      <button class="ghost modal-goto">Ver en el timeline</button>
+      <button class="icon-btn modal-close" aria-label="Cerrar" data-icon="close"></button>
+    </div>
+    <ul class="modal-body"></ul>
+  </dialog>
+
+  <template id="tpl-query">
+    <li class="card query">
+      <div class="card-head">
+        <span class="svc-icon" aria-hidden="true"></span>
+        <span class="tool"></span>
+        <span class="purpose"></span>
+        <span class="status"></span>
+        <button class="ghost copy-query" hidden><span class="btn-icon" data-icon="copy" aria-hidden="true"></span><span>Copiar consulta</span></button>
+        <button class="toggle-emails" hidden aria-pressed="false">Mostrar correos</button>
+        <button class="cancel" hidden>Cancelar</button>
+        <time></time>
+      </div>
+      <div class="meta"></div>
+      <pre class="query-text"></pre>
+      <details class="params"><summary>Parámetros</summary><pre></pre></details>
+      <div class="approval" hidden>
+        <p class="approval-reason"></p>
+        <div class="approval-actions">
+          <button class="approve">Aprobar y correr</button>
+          <button class="deny">Rechazar</button>
+          <span class="countdown"></span>
+        </div>
+      </div>
+      <ul class="progress"></ul>
+      <div class="error" hidden></div>
+      <div class="result" hidden>
+        <div class="tabs" role="tablist">
+          <button role="tab" data-tab="table" aria-selected="true">Tabla</button>
+          <button role="tab" data-tab="json" aria-selected="false">JSON</button>
+        </div>
+        <div class="tables"></div>
+        <pre class="json" hidden></pre>
+      </div>
+    </li>
+  </template>
+
+  <template id="tpl-table">
+    <section class="table-block">
+      <div class="result-bar">
+        <h3 class="table-name"></h3>
+        <span class="table-count"></span>
+        <input type="search" class="filter" placeholder="Filtrar filas">
+        <button class="copy-csv">Copiar CSV</button>
+      </div>
+      <div class="table-wrap"><table><thead></thead><tbody></tbody></table></div>
+    </section>
+  </template>
+
+  <dialog id="draft-history-modal" class="card-modal" aria-labelledby="draft-history-title">
+    <div class="modal-bar">
+      <h2 id="draft-history-title">Versiones del borrador</h2>
+      <button class="modal-close" aria-label="Cerrar historial">Cerrar</button>
+    </div>
+    <div class="modal-body"></div>
+  </dialog>
+
+  <dialog id="slack-enable-modal" class="card-modal slack-enable-modal" aria-labelledby="slack-enable-title">
+    <div class="modal-bar">
+      <h2 id="slack-enable-title">Activar vigilancia de Slack</h2>
+      <button class="icon-btn modal-close" aria-label="Cerrar" data-icon="close"></button>
+    </div>
+    <div class="modal-body">
+      <p class="modal-desc">
+        Selecciona desde qué momento deseas comenzar a monitorear los mensajes del canal:
+      </p>
+      <div class="slack-lookback-options" role="radiogroup" aria-label="Momento de inicio">
+        <label class="lookback-option">
+          <input type="radio" name="slack-lookback" value="0" checked>
+          <div class="option-content">
+            <span class="option-title">⚡ Solo tiempo real (Recomendado)</span>
+            <span class="option-desc">Analiza únicamente los mensajes nuevos que lleguen a partir de ahora.</span>
+          </div>
+        </label>
+        <label class="lookback-option lookback-option-custom">
+          <input type="radio" name="slack-lookback" value="custom">
+          <div class="option-content">
+            <span class="option-title">🕒 Mensajes anteriores</span>
+            <span class="option-desc">
+              Analizar mensajes recibidos en las últimas
+              <span class="lookback-input-group">
+                <input type="number" id="slack-custom-hours" min="1" max="24" value="1" step="1" aria-label="Horas hacia atrás">
+                <span class="unit">horas</span>
+              </span>
+              (mínimo 1 h, máximo 24 h).
+            </span>
+            <div class="quick-presets">
+              <button type="button" class="chip-preset" data-hours="1">1h</button>
+              <button type="button" class="chip-preset" data-hours="2">2h</button>
+              <button type="button" class="chip-preset" data-hours="3">3h</button>
+              <button type="button" class="chip-preset" data-hours="6">6h</button>
+              <button type="button" class="chip-preset" data-hours="12">12h</button>
+              <button type="button" class="chip-preset" data-hours="24">24h</button>
+            </div>
+          </div>
+        </label>
+      </div>
+      <div class="modal-actions">
+        <button type="button" class="ghost modal-cancel">Cancelar</button>
+        <button type="button" class="primary modal-confirm">Activar vigilancia</button>
+      </div>
+    </div>
+  </dialog>
+
+  <template id="tpl-draft">
+    <li class="card draft">
+      <div class="card-head">
+        <span class="svc-icon" aria-hidden="true"></span>
+        <span class="purpose">Borrador para <span class="draft-card"></span></span>
+        <span class="meta">no publicado</span>
+        <button class="draft-history" hidden aria-haspopup="dialog">Editado</button>
+        <button class="copy-draft"><span class="btn-icon" data-icon="copy" aria-hidden="true"></span><span>Copiar</span></button>
+        <time></time>
+      </div>
+      <p class="note-text"></p>
+    </li>
+  </template>
+
+  <template id="tpl-note">
+    <li class="card note">
+      <div class="card-head">
+        <span class="svc-icon" aria-hidden="true"></span>
+        <span class="purpose">Nota de Claude</span>
+        <time></time>
+      </div>
+      <p class="note-text"></p>
+    </li>
+  </template>
+
+  <script src="/static/app.js"></script>
+  <script src="/static/settings.js"></script>
+  <script src="/static/skills.js"></script>
+  <script src="/static/knowledge.js"></script>
+  <script src="/static/slack.js"></script>
+  <script src="/static/vendor/gsap.min.js"></script>
+  <script src="/static/onboarding.js"></script>
+</body>
+</html>

@@ -1,0 +1,29 @@
+<!doctype html>
+<html lang="es">
+<head>
+  <meta charset="utf-8">
+  <title>casebook</title>
+  <link rel="stylesheet" href="popup.css">
+</head>
+<body>
+  <header>
+    <img src="icons/icon-48.png" alt="" width="32" height="32">
+    <div>
+      <h1>casebook</h1>
+      <p>Guarda las sesiones de tus fuentes (las del pack del equipo) para el MCP de soporte.</p>
+    </div>
+  </header>
+  <ul id="systems" aria-live="polite"></ul>
+  <p id="error" class="error" hidden></p>
+  <div id="perms" class="perms" hidden>
+    <p>Para leer esas sesiones, Chrome necesita tu permiso en: <span id="perms-hosts"></span></p>
+    <button id="grant" type="button">Dar permiso</button>
+  </div>
+  <button id="push" type="button">Enviar sesiones ahora</button>
+  <footer>
+    Inicia sesión en esas páginas en este perfil y la sesión se guarda sola en el keyring.
+    Claude nunca ve las cookies.
+  </footer>
+  <script src="popup.js"></script>
+</body>
+</html>

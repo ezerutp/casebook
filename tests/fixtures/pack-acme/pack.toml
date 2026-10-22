@@ -1,0 +1,73 @@
+# Pack de prueba: un equipo ficticio con las mismas piezas que un pack real.
+
+[pack]
+name = "acme"
+version = "1.0.0"
+display_name = "Acme"
+
+[texts]
+domain = "casos de soporte de Acme"
+
+[card]
+prefix = "SUP"
+examples = ["SUP-1200", "SUP-1210"]
+
+[slack]
+channel_id = "C0ACME"
+channel_name = "soporte"
+
+[slack.triage]
+skill = "acme-triage"
+escalation = "ticket"
+escalation_label = "Ticket"
+reply_style = "en inglés, empezando con \"Hey @nombre\", lista para que la persona la pegue en el hilo"
+
+[slack.triage.outcomes]
+explain = "Se responde directo"
+ticket = "Abrir ticket"
+need_info = "Falta información"
+not_issue = "No es un issue"
+
+[doctor]
+shell_aliases = ["db-login", "os-prod", "os-prod-archive"]
+network_hint = "revisa la VPN o pide que agreguen tu IP a la whitelist del bastión"
+
+[sources.opensearch.prod]
+provider = "dashboards-proxy"
+system = "os"
+label = "OpenSearch prod"
+description = "logs de la app"
+hint = "familias: logs-*, users-*, orders-pending-*"
+domain = "vpc-acme-prod.us-east-1.es.amazonaws.com"
+tunnel_port = 9123
+ssh_host = "os_tunnel_prod"
+
+[sources.opensearch.prod-archive]
+provider = "dashboards-proxy"
+system = "os-archive"
+label = "OpenSearch archive"
+description = "orders-* en prod-archive"
+domain = "vpc-acme-archive.us-east-1.es.amazonaws.com"
+tunnel_port = 9126
+ssh_host = "os_tunnel_prod-archive"
+
+[sources.cloudwatch]
+provider = "aws"
+profile = "acme"
+hint = "por ejemplo /ecs/acme-api, /ecs/acme-worker"
+
+[sources.mysql]
+provider = "mysql-ssh"
+ssh_host = "db-bastion"
+host = "acme-prod.cluster-ro-abc123.us-east-1.rds.amazonaws.com"
+database = "acme"
+reader_host_pattern = "cluster-ro"
+environment = "prod"
+
+[sources.mysql.credentials]
+kind = "env-file"
+path = "~/.acme/credentials"
+user_var = "DB_USER"
+password_var = "DB_PASSWORD"
+hint = "corre `db-login` una vez: pide usuario y contraseña y los guarda en ~/.acme/credentials"
+fix = "db-login"

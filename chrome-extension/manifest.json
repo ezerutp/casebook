@@ -1,0 +1,33 @@
+{
+  "manifest_version": 3,
+  "name": "casebook",
+  "version": "0.3.0",
+  "description": "Entrega a casebook la sesión de las fuentes que inician sesión en el navegador (las del pack de tu equipo).",
+  "icons": {
+    "16": "icons/icon-16.png",
+    "32": "icons/icon-32.png",
+    "48": "icons/icon-48.png",
+    "128": "icons/icon-128.png"
+  },
+  "action": {
+    "default_title": "casebook: estado de las sesiones",
+    "default_popup": "popup.html",
+    "default_icon": {
+      "16": "icons/icon-16.png",
+      "32": "icons/icon-32.png",
+      "48": "icons/icon-48.png",
+      "128": "icons/icon-128.png"
+    }
+  },
+  "key": "MIIBIjANBgkqhkiG9w0BAQEFAAOCAQ8AMIIBCgKCAQEAzrrD1MkGRFYiVvgKO77rrP+nVJk4YPmss5lx5PKSMo3Vbq/Ja/7YhS68AusJj2cS8o1+0Y+fu0AviyWoYHJY+6pQOXbn6DKqxkwf1QofpbYU2uP0eT4ybYPfCWOFPXocfkNQAgz4BwA1RQzObt6DWwEJVcM/vhF06iUE91znRzv3tz+HBpNYS3eTbSEMQuFCj3eQB+0J+tAEir048/k904gZ6XKXhDFRYkrcdZg4ONn01e46PX1I/8+X0iPUlD188+VV4MOhwIeFk1J55HgeFW/SYKJePsNpVEMSF4E98klDf3n72UfZnDZAUD0azfikTRd9m1h1ixnoZyXs1m49twIDAQAB",
+  "permissions": [
+    "cookies",
+    "nativeMessaging"
+  ],
+  "optional_host_permissions": [
+    "https://*/*"
+  ],
+  "background": {
+    "service_worker": "background.js"
+  }
+}

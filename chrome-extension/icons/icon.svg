@@ -1,0 +1,9 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 128 128">
+  <!-- Ícono provisional (llave sobre el azul del visor). Para regenerar los PNG:
+       for s in 16 32 48 128; do magick -background none -density 600 icon.svg -resize ${s}x${s} icon-$s.png; done -->
+  <rect x="4" y="4" width="120" height="120" rx="28" fill="#2f6fdb"/>
+  <g fill="none" stroke="#ffffff" stroke-width="13" stroke-linecap="round" stroke-linejoin="round">
+    <circle cx="44" cy="64" r="20"/>
+    <path d="M64 64 H104 M90 64 V82 M104 64 V78"/>
+  </g>
+</svg>

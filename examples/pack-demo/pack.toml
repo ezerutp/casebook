@@ -1,0 +1,24 @@
+# Pack de ejemplo: un OpenSearch local (docker-compose.yml) para probar casebook sin nada de una empresa.
+#   docker compose -f examples/pack-demo/docker-compose.yml up -d
+#   casebook pack install examples/pack-demo
+#   casebook doctor
+
+[pack]
+name = "demo"
+version = "1.0.0"
+display_name = "Demo"
+
+[texts]
+domain = "casos de soporte de la demo"
+
+[card]
+prefix = "DEMO"
+examples = ["DEMO-1", "DEMO-2"]
+
+[sources.opensearch.local]
+provider = "direct"
+url = "http://localhost:9200"
+auth = "none"                  # el OpenSearch de docker-compose.yml corre sin seguridad
+label = "OpenSearch local"
+description = "el de docker-compose.yml"
+hint = "familias: demo-logs-*"

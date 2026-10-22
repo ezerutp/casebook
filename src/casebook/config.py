@@ -1,0 +1,659 @@
+"""Configuración en capas: valores de fábrica (neutros, sin fuentes), el pack activo y config.toml del usuario.
+
+- El pack (packs/<nombre>/pack.toml en DATA_DIR, el que dice packs/active) trae lo de una empresa: fuentes,
+  Slack, alias y textos del doctor. Tiene el mismo formato que config.toml más una tabla [pack].
+- ~/.config/casebook/config.toml pisa al pack, clave por clave.
+
+Las fuentes van en [sources.opensearch.<env>], [sources.cloudwatch] y [sources.mysql], cada una con su `provider`.
+El formato anterior ([opensearch.envs.<env>], [cloudwatch] con provider, [db] con ssh_host/host…) se sigue leyendo.
+
+Los ajustes que se pueden cambiar desde el visor están en SETTINGS: de ahí salen la carga, la validación, el
+guardado y la API. Cada servidor MCP recarga los archivos cuando cambian (refresh), así que no hace falta
+reiniciar salvo para host y puerto del visor.
+"""
+
+from __future__ import annotations
+
+import copy
+import os
+import tomllib
+from dataclasses import dataclass, field, fields
+from pathlib import Path
+from typing import Any
+
+from . import providers
+
+
+def _xdg(var: str, fallback: str) -> Path:
+    return Path(os.environ.get(var) or Path.home() / fallback)
+
+
+CONFIG_PATH = _xdg("XDG_CONFIG_HOME", ".config") / "casebook" / "config.toml"
+DATA_DIR = _xdg("XDG_DATA_HOME", ".local/share") / "casebook"
+PACKS_DIR = DATA_DIR / "packs"
+
+
+@dataclass
+class OpenSearchEnv:
+    domain: str = ""  # dashboards-proxy: el dominio del cluster (va en SNI y Host)
+    tunnel_port: int = 0  # dashboards-proxy: el LocalForward del host de ssh
+    ssh_host: str = ""  # el Host de ~/.ssh/config que levanta el túnel (os_tunnel_<env>); en direct, opcional
+    system: str = ""  # id para `login <id>`; vacío = os-<env>
+    label: str = ""  # nombre para mostrar; vacío = OpenSearch <env>
+    description: str = ""  # qué hay en el entorno (familias de índices), para las tools y el instalador
+    provider: str = "dashboards-proxy"  # ver providers/
+    options: dict[str, Any] = field(default_factory=dict)  # el resto de las opciones del proveedor
+    hint: str = ""  # qué hay adentro (familias de índices), para la descripción de las tools
+
+
+@dataclass
+class DbCredentials:
+    """De dónde salen usuario y contraseña de la base. Siempre se prueba también el keyring (`login db`)."""
+
+    kind: str = "keyring"  # "env-file" (líneas `export X=...`), "env" (variables de entorno) o "keyring"
+    path: str = ""  # env-file: el archivo
+    user_var: str = ""  # env-file y env: los nombres de las variables
+    password_var: str = ""
+    hint: str = "guárdalas con `casebook login db`"  # lo que se le dice al usuario si faltan
+    fix: str = ""  # el comando que sugieren el doctor y el instalador; vacío = ninguno
+
+
+@dataclass
+class Database:
+    provider: str = ""  # vacío = no hay base configurada
+    ssh_host: str = ""
+    # Endpoint de solo lectura (reader) de la base. Nunca el writer.
+    host: str = ""
+    port: int = 3306
+    database: str = ""
+    reader_host_pattern: str = ""  # si no está vacío, el host tiene que contenerlo (p. ej. "cluster-ro" en Aurora)
+    hint: str = ""  # qué tablas hay, para la descripción de las tools
+    environment: str = ""  # cómo se nombra en el conocimiento ("<environment>/<database>"); vacío = el host
+    max_execution_ms: int = 15_000
+    # EXPLAIN previo: se rechaza un full scan (type=ALL) sobre más de estas filas estimadas,
+    # o cualquier plan cuyo producto de filas estimadas supere el segundo umbral.
+    full_scan_max_rows: int = 200_000
+    plan_max_rows: int = 5_000_000
+    # LIMIT que se agrega a un SELECT sin LIMIT, y el máximo aceptado.
+    default_limit: int = 100
+    max_limit: int = 5_000
+    credentials: DbCredentials = field(default_factory=DbCredentials)
+
+
+@dataclass
+class Triage:
+    """El triage automático de Slack: con qué skill, qué resultados puede dar y cómo se escribe la respuesta."""
+
+    skill: str = ""  # la skill que guía el triage; vacía = sin skill
+    outcomes: dict[str, str] = field(default_factory=lambda: {
+        "explain": "Se responde directo",
+        "escalate": "Escalar con una card",
+        "need_info": "Falta información",
+        "not_issue": "No es un issue",
+    })
+    escalation: str = "escalate"  # el resultado que pide una card (va con el campo `card` del análisis)
+    escalation_label: str = "Card"
+    reply_style: str = "en el idioma del hilo, lista para que la persona la pegue"
+
+
+@dataclass
+class Pack:
+    name: str
+    version: str
+    display_name: str
+    path: Path
+
+
+@dataclass
+class Config:
+    viewer_host: str = "127.0.0.1"
+    viewer_port: int = 8765
+    db_path: Path = field(default_factory=lambda: DATA_DIR / "sessions.db")  # DATA_DIR al crear la config
+    # CloudWatch Logs Insights: el proveedor ("aws" o el de un plugin; vacío = sin CloudWatch) y sus opciones.
+    cw_provider: str = ""
+    cw_options: dict[str, Any] = field(default_factory=dict)
+    cw_hint: str = ""  # qué log groups hay, para la descripción de las tools
+    # Cuánto espera una consulta cara a que el ingeniero la apruebe en el visor.
+    approval_timeout_s: float = 180
+    # Abrir el visor en el navegador en la primera session_start si no hay ninguna pestaña conectada.
+    viewer_auto_open: bool = True
+    # Base de los links a las cards (por ejemplo https://<sitio>.atlassian.net/browse/). Sin valor, el visor no
+    # muestra el botón "Abrir card".
+    jira_base_url: str | None = None
+    # CloudWatch: tope de costo por consulta (el max_cost_usd por defecto de cw_query) y ventana máxima.
+    cw_max_cost_usd: float = 0.25
+    cw_max_window_days: int = 7
+    # OpenSearch: size (y from + size) máximo de os_search.
+    os_max_size: int = 10_000
+    # Vigilancia de Slack (slack_watch.py): escucha las notificaciones de Slack de escritorio y lee el canal con el
+    # conector de claude.ai vía `claude -p` solo cuando llega una (o en la revisión de respaldo, si se activa).
+    slack_watch: bool = False
+    slack_channel_id: str = ""  # el canal que se vigila (lo trae el pack)
+    slack_channel_name: str = ""  # como aparece en las notificaciones de Slack
+    slack_backup_poll_minutes: int = 0  # 0 = sin revisión de respaldo (solo notificaciones)
+    slack_default_lookback_minutes: int = 0  # 0 = solo mensajes en tiempo real al activar
+    slack_ask_lookback_on_enable: bool = True  # preguntar ventana al encender en el visor
+    slack_poll_model: str = "haiku"
+    slack_analysis_model: str = "sonnet"
+    slack_max_analyses_per_day: int = 50
+    db: Database = field(default_factory=Database)
+    opensearch: dict[str, OpenSearchEnv] = field(default_factory=dict)
+    # Doctor: alias de shell que el equipo espera tener y qué decir cuando no se llega al servidor SSH.
+    doctor_aliases: list[str] = field(default_factory=list)
+    network_hint: str = "revisa tu conexión, la VPN o que tu IP esté permitida en el servidor SSH"
+    pack: Pack | None = None  # el pack del que salieron los valores base
+    # Textos para Claude (texts.py): de qué son los casos y ejemplos de card ([texts] y [card] del pack).
+    texts_domain: str = "casos de soporte"
+    card_examples: list[str] = field(default_factory=lambda: ["CASO-1234", "CASO-1240"])
+    card_prefix: str = ""  # el prefijo de las cards del equipo (el visor filtra por él); vacío = cualquier card
+    slack_triage: Triage = field(default_factory=Triage)
+    # De qué archivo salió y su mtime al cargarlo (para refresh). Un Config() armado a mano no se recarga.
+    source: Path | None = field(default=None, repr=False, compare=False)
+    loaded_mtime: Any = field(default=None, repr=False, compare=False)  # _signature() al cargar
+    pack_arg: Path | str | None = field(default=None, repr=False, compare=False)  # el `pack` de load()
+
+
+# --- ajustes editables ---------------------------------------------------------------------------------------
+
+
+class SettingError(ValueError):
+    pass
+
+
+@dataclass(frozen=True)
+class Setting:
+    key: str  # sección.clave en el TOML
+    attr: str  # atributo de Config ("db.x" para Config.db.x)
+    type: type
+    min: float | None = None
+    max: float | None = None
+    restart: bool = False  # el cambio recién toma efecto al reiniciar Claude Code
+    choices: tuple[str, ...] | None = None
+    optional: bool = False  # admite vacío (None)
+
+    def get(self, cfg: Config) -> Any:
+        obj, name = _target(cfg, self.attr)
+        return getattr(obj, name)
+
+    def set(self, cfg: Config, value: Any) -> None:
+        obj, name = _target(cfg, self.attr)
+        setattr(obj, name, value)
+
+    def coerce(self, value: Any, strict: bool = True) -> Any:
+        """Valida un valor y lo devuelve con el tipo correcto. strict=False (al leer el archivo) solo revisa el
+        tipo: una config escrita a mano antes de que existieran los rangos no debe impedir el arranque."""
+        if value is None or value == "":
+            if self.optional:
+                return None
+            raise SettingError(f"{self.key}: no puede quedar vacío")
+        if self.type is bool:
+            if not isinstance(value, bool):
+                raise SettingError(f"{self.key}: tiene que ser verdadero o falso")
+            return value
+        if self.type in (int, float):
+            if isinstance(value, bool) or not isinstance(value, (int, float, str)):
+                raise SettingError(f"{self.key}: tiene que ser un número")
+            try:
+                number = float(value)
+            except ValueError:
+                raise SettingError(f"{self.key}: tiene que ser un número") from None
+            if self.type is int:
+                if not number.is_integer():
+                    raise SettingError(f"{self.key}: tiene que ser un número entero")
+                number = int(number)
+            out_of_range = self.min is not None and number < self.min or self.max is not None and number > self.max
+            if strict and out_of_range:
+                raise SettingError(f"{self.key}: tiene que estar entre {self.min:g} y {self.max:g}")
+            return number
+        text = str(value).strip()
+        if strict and self.choices and text not in self.choices:
+            raise SettingError(f"{self.key}: tiene que ser uno de {', '.join(self.choices)}")
+        if self.key == "jira.base_url":
+            if strict and not text.startswith("https://"):
+                raise SettingError("jira.base_url: tiene que empezar con https://")
+            text = text.rstrip("/") + "/"
+        return text
+
+
+def _target(cfg: Config, attr: str) -> tuple[Any, str]:
+    if attr.startswith("db."):
+        return cfg.db, attr[3:]
+    return cfg, attr
+
+
+# Los mínimos y máximos son límites duros: desde el visor se pueden ajustar las guardas, no desactivarlas.
+SETTINGS: tuple[Setting, ...] = (
+    Setting("viewer.host", "viewer_host", str, restart=True, choices=("127.0.0.1", "::1", "localhost")),
+    Setting("viewer.port", "viewer_port", int, 1024, 65535, restart=True),
+    Setting("viewer.auto_open", "viewer_auto_open", bool),
+    Setting("viewer.approval_timeout_s", "approval_timeout_s", float, 10, 900),
+    Setting("jira.base_url", "jira_base_url", str, optional=True),
+    Setting("cloudwatch.max_cost_usd", "cw_max_cost_usd", float, 0.01, 5),
+    Setting("cloudwatch.max_window_days", "cw_max_window_days", int, 1, 30),
+    Setting("opensearch.max_size", "os_max_size", int, 1, 10_000),
+    Setting("slack.watch", "slack_watch", bool),
+    Setting("slack.channel_id", "slack_channel_id", str),
+    Setting("slack.channel_name", "slack_channel_name", str),
+    Setting("slack.backup_poll_minutes", "slack_backup_poll_minutes", int, 0, 1440),
+    Setting("slack.default_lookback_minutes", "slack_default_lookback_minutes", int, 0, 1440),
+    Setting("slack.ask_lookback_on_enable", "slack_ask_lookback_on_enable", bool),
+    Setting("slack.poll_model", "slack_poll_model", str, choices=("haiku", "sonnet", "opus")),
+    Setting("slack.analysis_model", "slack_analysis_model", str, choices=("haiku", "sonnet", "opus")),
+    Setting("slack.max_analyses_per_day", "slack_max_analyses_per_day", int, 1, 500),
+    Setting("db.default_limit", "db.default_limit", int, 1, 10_000),
+    Setting("db.max_limit", "db.max_limit", int, 1, 10_000),
+    Setting("db.max_execution_ms", "db.max_execution_ms", int, 1_000, 120_000),
+    Setting("db.full_scan_max_rows", "db.full_scan_max_rows", int, 1_000, 50_000_000),
+    Setting("db.plan_max_rows", "db.plan_max_rows", int, 10_000, 1_000_000_000),
+)
+BY_KEY = {s.key: s for s in SETTINGS}
+
+
+def _check_consistency(cfg: Config) -> None:
+    if cfg.db.default_limit > cfg.db.max_limit:
+        raise SettingError("db.default_limit no puede superar a db.max_limit")
+
+
+# --- carga ---------------------------------------------------------------------------------------------------
+
+
+def _read(path: Path) -> dict[str, Any]:
+    return tomllib.loads(path.read_text()) if path.exists() else {}
+
+
+def _lookup(data: dict[str, Any], key: str) -> tuple[bool, Any]:
+    node: Any = data
+    for part in key.split("."):
+        if not isinstance(node, dict) or part not in node:
+            return False, None
+        node = node[part]
+    return True, node
+
+
+_ACTIVE = "active"  # load(pack=_ACTIVE): el pack activo; pack=None: sin pack; pack=<Path>: ese pack.toml
+
+
+def active_pack() -> Path | None:
+    """El pack.toml del pack activo (PACKS_DIR/active dice cuál), o None si no hay."""
+    marker = PACKS_DIR / "active"
+    try:
+        name = marker.read_text().strip()
+    except OSError:
+        return None
+    path = PACKS_DIR / name / "pack.toml"
+    return path if name and path.exists() else None
+
+
+def _pack_path(pack: Path | str | None) -> Path | None:
+    return active_pack() if pack == _ACTIVE else (Path(pack) if pack else None)
+
+
+def merge(base: dict[str, Any], over: dict[str, Any]) -> dict[str, Any]:
+    """`over` pisa a `base` clave por clave (las tablas se combinan, el resto se reemplaza)."""
+    out = copy.deepcopy(base)
+    for key, value in over.items():
+        if isinstance(value, dict) and isinstance(out.get(key), dict):
+            out[key] = merge(out[key], value)
+        else:
+            out[key] = copy.deepcopy(value)
+    return out
+
+
+# Claves de [db] que son de la fuente (van a [sources.mysql]); las demás son guardas (SETTINGS).
+_DB_SOURCE_KEYS = ("provider", "ssh_host", "host", "port", "database", "reader_host_pattern", "credentials")
+_CW_SETTING_KEYS = ("max_cost_usd", "max_window_days")
+
+
+def normalize(data: dict[str, Any]) -> dict[str, Any]:
+    """Pasa el formato anterior ([opensearch.envs.*], [cloudwatch] con provider, [db] con ssh_host…) a
+    [sources.*]. Si están los dos, manda [sources.*]."""
+    data = copy.deepcopy(data)
+    legacy: dict[str, Any] = {}
+    envs = data.get("opensearch", {}).pop("envs", None)
+    if envs:
+        legacy["opensearch"] = envs
+    cw = data.get("cloudwatch", {})
+    cw_source = {k: cw.pop(k) for k in list(cw) if k not in _CW_SETTING_KEYS}
+    if cw_source:
+        legacy["cloudwatch"] = cw_source
+    db = data.get("db", {})
+    db_source = {k: db.pop(k) for k in _DB_SOURCE_KEYS if k in db}
+    if db_source:
+        legacy["mysql"] = db_source
+    for section in ("opensearch", "cloudwatch", "db"):
+        if section in data and not data[section]:
+            data.pop(section)
+    if legacy:
+        data["sources"] = merge(legacy, data.get("sources", {}))
+    return data
+
+
+def _layer(base: dict[str, Any], over: dict[str, Any]) -> dict[str, Any]:
+    """merge(), salvo que una fuente que cambia de `provider` se reemplaza entera: las opciones del proveedor
+    anterior no le sirven al nuevo."""
+    out = merge(base, over)
+    for kind, value in over.get("sources", {}).items():
+        previous = base.get("sources", {}).get(kind)
+        if kind == "opensearch" and isinstance(value, dict):
+            for env, src in value.items():
+                old = (previous or {}).get(env)
+                if isinstance(src, dict) and old and src.get("provider", old.get("provider")) != old.get("provider"):
+                    out["sources"]["opensearch"][env] = copy.deepcopy(src)
+        elif isinstance(value, dict) and previous and value.get("provider", previous.get("provider")) != previous.get("provider"):
+            out["sources"][kind] = copy.deepcopy(value)
+    return out
+
+
+def _read_layers(path: Path, pack_path: Path | None) -> tuple[dict[str, Any], dict[str, Any], dict[str, Any]]:
+    """(datos combinados, la tabla [pack], solo el pack normalizado)."""
+    pack_data = _read(pack_path) if pack_path else {}
+    meta = pack_data.pop("pack", {})
+    base = normalize(pack_data)
+    return _layer(base, normalize(_read(path))), meta, base
+
+
+def load(path: Path | None = None, pack: Path | str | None = _ACTIVE) -> Config:
+    path = path or CONFIG_PATH
+    pack_path = _pack_path(pack)
+    cfg = Config(source=path, pack_arg=pack)
+    data, meta, _ = _read_layers(path, pack_path)
+    if pack_path:
+        cfg.pack = Pack(str(meta.get("name") or pack_path.parent.name), str(meta.get("version", "")),
+                        str(meta.get("display_name") or meta.get("name") or pack_path.parent.name), pack_path)
+    cfg.loaded_mtime = _signature(path, pack_path)
+    for setting in SETTINGS:
+        found, value = _lookup(data, setting.key)
+        if found:
+            setting.set(cfg, setting.coerce(value, strict=False))
+    if "db_path" in data:
+        cfg.db_path = Path(data["db_path"]).expanduser()
+    texts = data.get("texts", {})
+    cfg.texts_domain = str(texts.get("domain", cfg.texts_domain))
+    cfg.card_prefix = str(data.get("card", {}).get("prefix", cfg.card_prefix))
+    examples = [str(c) for c in data.get("card", {}).get("examples", [])]
+    if examples:
+        cfg.card_examples = (examples * 2)[:2]
+    triage = data.get("slack", {}).get("triage", {})
+    if triage:
+        known = {f.name for f in fields(Triage)}
+        unknown = sorted(set(triage) - known)
+        if unknown:
+            raise SettingError(f"slack.triage: opción desconocida: {', '.join(unknown)}")
+        cfg.slack_triage = Triage(**{**vars(Triage()), **triage})
+        if cfg.slack_triage.escalation not in cfg.slack_triage.outcomes:
+            raise SettingError("slack.triage.escalation tiene que ser uno de los outcomes")
+    doctor = data.get("doctor", {})
+    cfg.doctor_aliases = [str(a) for a in doctor.get("shell_aliases", cfg.doctor_aliases)]
+    cfg.network_hint = str(doctor.get("network_hint", cfg.network_hint))
+    try:
+        _load_sources(cfg, data.get("sources", {}))
+    except providers.ProviderError as exc:
+        raise SettingError(str(exc)) from None
+    ids = [e.system or f"os-{env}" for env, e in cfg.opensearch.items()]
+    if len(ids) != len(set(ids)) or {"cw", "db"} & set(ids):
+        raise SettingError(f"sources.opensearch: ids de sistema repetidos o reservados ({', '.join(ids)})")
+    _check_consistency(cfg)
+    return cfg
+
+
+def _signature(path: Path, pack_path: Path | None) -> Any:
+    """Lo que cambia si hay que recargar: los mtime de config.toml y del pack, y cuál es el pack."""
+    def mtime(p: Path | None) -> float | None:
+        try:
+            return p.stat().st_mtime if p and p.exists() else None
+        except OSError:
+            return None
+
+    return (mtime(path), str(pack_path) if pack_path else None, mtime(pack_path))
+
+
+# Claves de una fuente que no son opciones del proveedor.
+_SOURCE_META = ("system", "label", "description", "provider", "hint")
+
+
+def _options(kind: str, name: str, values: dict[str, Any], where: str) -> dict[str, Any] | None:
+    """Las opciones validadas contra el esquema del proveedor; None si el proveedor no está instalado (la fuente
+    queda configurada pero deshabilitada, y el doctor lo dice)."""
+    cls = providers.get(kind, name)
+    if cls is None:
+        return None
+    return providers.validate(cls, values, where)
+
+
+def _load_sources(cfg: Config, sources: dict[str, Any]) -> None:
+    for env, values in sources.get("opensearch", {}).items():
+        name = str(values.get("provider", "dashboards-proxy"))
+        raw = {k: v for k, v in values.items() if k not in _SOURCE_META}
+        opts = _options("opensearch", name, raw, f"sources.opensearch.{env}")
+        if opts is None:
+            opts = dict(raw)
+        opts = {k: v.format(env=env) if isinstance(v, str) else v for k, v in opts.items()}
+        cfg.opensearch[env] = OpenSearchEnv(
+            str(opts.pop("domain", "") or ""),
+            int(opts.pop("tunnel_port", 0) or 0),
+            str(opts.pop("ssh_host", "") or ""),
+            str(values.get("system", "")),
+            str(values.get("label", "")),
+            str(values.get("description", "")),
+            name,
+            opts,
+            str(values.get("hint", "")),
+        )
+
+    cw = sources.get("cloudwatch")
+    if cw:
+        if not cw.get("provider"):
+            raise SettingError("sources.cloudwatch: falta `provider` (por ejemplo \"aws\")")
+        cfg.cw_provider = str(cw["provider"])
+        cfg.cw_hint = str(cw.get("hint", ""))
+        raw = {k: v for k, v in cw.items() if k not in ("provider", "hint")}
+        opts = _options("logs", cfg.cw_provider, raw, "sources.cloudwatch")
+        cfg.cw_options = raw if opts is None else opts
+
+    db = sources.get("mysql")
+    if db:
+        cfg.db.provider = str(db.get("provider", "mysql-ssh"))
+        cfg.db.hint = str(db.get("hint", ""))
+        cfg.db.environment = str(db.get("environment", ""))
+        cls = providers.get("sql", cfg.db.provider)
+        if cls is not None:
+            raw = {k: v for k, v in db.items() if k not in ("provider", "credentials", "hint", "environment")}
+            for key, value in providers.validate(cls, raw, "sources.mysql").items():
+                if value is not None:
+                    setattr(cfg.db, key, value)
+        creds = db.get("credentials", {})
+        if creds:
+            known = {f.name for f in fields(DbCredentials)}
+            unknown = sorted(set(creds) - known)
+            if unknown:
+                raise SettingError(f"sources.mysql.credentials: opción desconocida: {', '.join(unknown)}")
+            merged = DbCredentials(**{**vars(DbCredentials()), **{k: str(v) for k, v in creds.items()}})
+            if merged.kind not in ("env-file", "env", "keyring"):
+                raise SettingError("sources.mysql.credentials.kind tiene que ser env-file, env o keyring")
+            if merged.kind == "env-file" and not merged.path:
+                raise SettingError("sources.mysql.credentials: con kind = \"env-file\" falta `path`")
+            if merged.kind != "keyring" and not (merged.user_var and merged.password_var):
+                raise SettingError("sources.mysql.credentials: faltan `user_var` y `password_var`")
+            cfg.db.credentials = merged
+
+
+# Lo que no cambia en caliente: el visor ya escucha en un host y puerto, y la base de sesiones está abierta.
+_NOT_LIVE = {"viewer_host", "viewer_port", "db_path", "source", "loaded_mtime", "pack_arg"}
+
+
+def refresh(cfg: Config) -> bool:
+    """Si config.toml o el pack cambiaron desde la última carga (o se activó otro pack), copia los valores nuevos
+    sobre `cfg` (en el lugar, así los clientes que guardan una referencia a cfg o a cfg.db ven el cambio). Un
+    archivo inválido se ignora y quedan los valores anteriores. Devuelve True si cambió algo."""
+    path = cfg.source
+    if path is None:
+        return False
+    signature = _signature(path, _pack_path(cfg.pack_arg))
+    if signature == cfg.loaded_mtime:
+        return False
+    try:
+        fresh = load(path, cfg.pack_arg)
+    except (OSError, ValueError, KeyError, TypeError):  # tomllib.TOMLDecodeError y SettingError son ValueError
+        return False
+    for f in fields(Config):
+        if f.name in _NOT_LIVE:
+            continue
+        if f.name == "db":
+            for g in fields(Database):
+                setattr(cfg.db, g.name, getattr(fresh.db, g.name))
+        elif f.name == "opensearch":
+            cfg.opensearch.clear()
+            cfg.opensearch.update(fresh.opensearch)
+        else:
+            setattr(cfg, f.name, getattr(fresh, f.name))
+    cfg.loaded_mtime = fresh.loaded_mtime
+    return True
+
+
+# --- guardado ------------------------------------------------------------------------------------------------
+
+
+def base(pack: Path | str | None = _ACTIVE) -> Config:
+    """Los valores sin config.toml del usuario: los de fábrica más los del pack. Un ajuste igual a esto no se
+    escribe en config.toml (así un cambio del pack le llega a quien no lo tocó)."""
+    cfg = Config()
+    pack_path = _pack_path(pack)
+    if not pack_path:
+        return cfg
+    _, _, data = _read_layers(Path("/nonexistent/config.toml"), pack_path)
+    for setting in SETTINGS:
+        found, value = _lookup(data, setting.key)
+        if found:
+            setting.set(cfg, setting.coerce(value, strict=False))
+    return cfg
+
+
+def save(values: dict[str, Any], path: Path | None = None, pack: Path | str | None = _ACTIVE) -> dict[str, Any]:
+    """Valida `values` ({clave: valor}, claves de SETTINGS) y los escribe en config.toml, conservando las demás
+    claves del archivo. Un valor igual al de fábrica (o al del pack) se borra del archivo. Antes de reescribir deja
+    una copia en config.toml.bak (el archivo se regenera, así que los comentarios no sobreviven). Devuelve lo que
+    se aplicó."""
+    path = path or CONFIG_PATH
+    unknown = sorted(set(values) - set(BY_KEY))
+    if unknown:
+        raise SettingError(f"ajuste desconocido: {', '.join(unknown)}")
+    defaults = base(pack)
+    clean = {key: BY_KEY[key].coerce(value) for key, value in values.items()}
+
+    data = _read(path)
+    probe = load(path, pack)  # la config actual + los cambios, para revisar que quede coherente
+    for key, value in clean.items():
+        BY_KEY[key].set(probe, value)
+    _check_consistency(probe)
+
+    for key, value in clean.items():
+        section, name = key.split(".", 1)
+        table = data.setdefault(section, {})
+        if value is None or value == BY_KEY[key].get(defaults):
+            table.pop(name, None)
+        else:
+            table[name] = value
+        if not table:
+            data.pop(section, None)
+
+    path.parent.mkdir(parents=True, exist_ok=True)
+    if path.exists():
+        path.with_name(path.name + ".bak").write_text(path.read_text())
+    tmp = path.with_name(path.name + ".tmp")
+    tmp.write_text(dumps(data))
+    tmp.replace(path)
+    return clean
+
+
+def _write_user(data: dict[str, Any], path: Path) -> None:
+    path.parent.mkdir(parents=True, exist_ok=True)
+    if path.exists():
+        path.with_name(path.name + ".bak").write_text(path.read_text())
+    tmp = path.with_name(path.name + ".tmp")
+    tmp.write_text(dumps(data))
+    tmp.replace(path)
+
+
+SOURCE_KINDS = ("opensearch", "cloudwatch", "mysql")
+
+
+def set_source(kind: str, env: str | None, values: dict[str, Any], path: Path | None = None,
+               pack: Path | str | None = _ACTIVE) -> None:
+    """Agrega o reemplaza una fuente en config.toml ([sources.opensearch.<env>], [sources.cloudwatch] o
+    [sources.mysql]). Se valida cargando la config resultante antes de escribir."""
+    path = path or CONFIG_PATH
+    if kind not in SOURCE_KINDS or (kind == "opensearch") != bool(env):
+        raise SettingError("fuente inválida: opensearch lleva un entorno; cloudwatch y mysql, no")
+    data = normalize(_read(path))
+    sources = data.setdefault("sources", {})
+    if kind == "opensearch":
+        sources.setdefault("opensearch", {})[env] = values
+    else:
+        sources[kind] = values
+    probe = path.with_name(path.name + ".probe")
+    probe.write_text(dumps(data))
+    try:
+        load(probe, pack)
+    finally:
+        probe.unlink(missing_ok=True)
+    _write_user(data, path)
+
+
+def remove_source(kind: str, env: str | None, path: Path | None = None) -> bool:
+    """Quita una fuente de config.toml. Devuelve False si ahí no estaba (por ejemplo, porque es del pack)."""
+    path = path or CONFIG_PATH
+    data = normalize(_read(path))
+    sources = data.get("sources", {})
+    container, key = (sources.get("opensearch", {}), env) if kind == "opensearch" else (sources, kind)
+    if key not in container:
+        return False
+    del container[key]
+    if kind == "opensearch" and not container:
+        sources.pop("opensearch", None)
+    if not sources:
+        data.pop("sources", None)
+    _write_user(data, path)
+    return True
+
+
+def dumps(data: dict[str, Any]) -> str:
+    """TOML mínimo para lo que tiene este archivo (y un pack): tablas anidadas, valores simples y listas de tablas
+    ([[requires.plugins]])."""
+    out = ["# casebook. Se puede editar a mano o desde Ajustes en el visor.", ""]
+
+    def value(v: Any) -> str:
+        if isinstance(v, bool):
+            return "true" if v else "false"
+        if isinstance(v, (int, float)):
+            return repr(v)
+        if isinstance(v, str):
+            return '"' + v.replace("\\", "\\\\").replace('"', '\\"').replace("\n", "\\n") + '"'
+        if isinstance(v, list):
+            return "[" + ", ".join(value(x) for x in v) + "]"
+        raise TypeError(f"no sé escribir {type(v).__name__} en TOML")
+
+    def is_tables(v: Any) -> bool:
+        return isinstance(v, list) and bool(v) and all(isinstance(x, dict) for x in v)
+
+    def table(prefix: str, node: dict[str, Any], header: str | None = None) -> None:
+        scalars = {k: v for k, v in node.items() if not isinstance(v, dict) and not is_tables(v)}
+        if header or (prefix and scalars):
+            out.append(header or f"[{prefix}]")
+        for k, v in scalars.items():
+            out.append(f"{_key(k)} = {value(v)}")
+        if scalars or header:
+            out.append("")
+        for k, v in node.items():
+            name = f"{prefix}.{_key(k)}" if prefix else _key(k)
+            if isinstance(v, dict):
+                table(name, v)
+            elif is_tables(v):
+                for item in v:
+                    table(name, item, header=f"[[{name}]]")
+
+    table("", data)
+    return "\n".join(out).rstrip() + "\n"
+
+
+def _key(k: str) -> str:
+    return k if k.replace("_", "").replace("-", "").isalnum() else '"' + k.replace('"', '\\"') + '"'

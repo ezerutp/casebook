@@ -1,0 +1,45 @@
+[build-system]
+requires = ["hatchling"]
+build-backend = "hatchling.build"
+
+[project]
+name = "casebook"
+version = "0.3.0"
+description = "Herramientas MCP de solo lectura para investigar casos de soporte, con un visor en vivo"
+readme = "README.md"
+license = "MIT"
+license-files = ["LICENSE"]
+requires-python = ">=3.12"
+dependencies = [
+    "mcp>=2.3,<3",
+    "fastapi>=0.115",
+    "uvicorn>=0.30",
+    "httpx>=0.28",
+    "pydantic>=2.7",
+    "keyring>=25",
+    "pymysql>=1.1",
+    "sqlglot>=25",
+    "playwright>=1.51,<2",
+    "rich>=13",
+    "questionary>=2",
+    "jeepney>=0.8; sys_platform == 'linux'",  # escuchar las notificaciones de Slack (vigilancia del canal)
+]
+
+[project.optional-dependencies]
+dev = ["pytest>=8"]
+gui = ["PySide6-Essentials>=6.6"]  # el instalador gráfico; el asistente lo descarga si lo eliges
+aws = ["boto3>=1.34"]  # CloudWatch con un perfil de AWS (cloudwatch.provider = "aws")
+browser = []  # Compatibilidad con instalaciones anteriores; Playwright ya es obligatorio.
+
+[project.scripts]
+casebook = "casebook.cli:main"
+
+[tool.hatch.build.targets.wheel]
+packages = ["src/casebook"]
+
+# La instalación local copia la extensión desde el paquete: así no depende del repo.
+[tool.hatch.build.targets.wheel.force-include]
+"chrome-extension" = "casebook/chrome_extension"
+
+[tool.pytest.ini_options]
+testpaths = ["tests"]
