@@ -109,7 +109,8 @@ def handle(cfg, message: dict) -> dict:
             target = login.browser_target(cfg, system)
             app_host, cookie_host = target.url.split("/")[2], target.cookie_url.split("/")[2]
             # Los permisos que tiene que tener la extensión para este sistema (se piden desde el popup).
-            origins = sorted({f"https://{app_host}/*", f"https://{cookie_host}/*"})
+            origins = sorted({f"https://{app_host}/*", f"https://{cookie_host}/*",
+                              *(f"https://*.{d.lstrip('.')}/*" for d in target.cookie_domains)})
             out.append({"system": system.id, "app_host": app_host, "cookie_url": target.cookie_url, "origins": origins})
         return {"targets": out}
     if kind == "status":

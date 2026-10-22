@@ -28,7 +28,7 @@ class WebLogsProvider(Provider):
     fields = (Field("api", "API", required=True), Field("origin", "Web", required=True))
 
     def login_target(self):
-        return BrowserTarget(f"{ORIGIN}/login", f"{API}/me", validate)
+        return BrowserTarget(f"{ORIGIN}/login", f"{API}/me", validate, cookie_domains=("acme.example",))
 
     def prepare_login(self):
         try:

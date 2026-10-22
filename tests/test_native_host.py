@@ -58,7 +58,7 @@ def test_targets_come_from_config_and_mark_the_extension_connected():
     assert set(by_system) == {"os", "os-archive", "cw"}
     assert by_system["cw"] == {"system": "cw", "app_host": "logs.acme.example",
                                "cookie_url": "https://api-logs.acme.example/me",
-                               "origins": ["https://api-logs.acme.example/*", "https://logs.acme.example/*"]}
+                               "origins": ["https://*.acme.example/*", "https://api-logs.acme.example/*", "https://logs.acme.example/*"]}
     assert by_system["os"]["app_host"] == acme().opensearch["prod"].domain
     assert native_host.connected()
 

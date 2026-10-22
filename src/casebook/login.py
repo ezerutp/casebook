@@ -84,6 +84,9 @@ class BrowserTarget:
     url: str  # la página donde el usuario inicia sesión
     cookie_url: str  # solo las cookies que el navegador mandaría a esta URL
     check: Callable[[str], Validation]
+    # Dominios padre donde viven las cookies de la sesión (por ejemplo "ejemplo.com" para una cookie de
+    # .ejemplo.com). Chrome solo deja leer una cookie con permiso sobre su dominio: la extensión lo pide.
+    cookie_domains: tuple[str, ...] = ()
 
 
 def browser_target(cfg: Config, system: System) -> BrowserTarget:
