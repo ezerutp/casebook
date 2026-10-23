@@ -26,7 +26,6 @@ from PySide6.QtWidgets import (
     QHBoxLayout,
     QLabel,
     QMainWindow,
-    QMessageBox,
     QPlainTextEdit,
     QPushButton,
     QRadioButton,
@@ -174,7 +173,7 @@ class Page(QWidget):
         self.enabled = True
         outer = QVBoxLayout(self)
         outer.setContentsMargins(0, 0, 0, 0)
-        scroll = QScrollArea()
+        scroll = self.scroll = QScrollArea()
         scroll.setWidgetResizable(True)
         scroll.setHorizontalScrollBarPolicy(Qt.ScrollBarPolicy.ScrollBarAlwaysOff)
         holder = QWidget()
@@ -487,17 +486,29 @@ class PackPage(Page):
 
     def build(self) -> None:
         p = self.palette_
-        card = self.card()
+        self.current_card = self.card()
         self.list = RowList(inset=50)
-        card.box.addWidget(self.list)
-        self.body.addWidget(card)
+        self.current_card.box.addWidget(self.list)
+        self.body.addWidget(self.current_card)
         folder = button("Instalar desde una carpeta", "", "folder", p, small=True)
         archive = button("Instalar un .zip", "", "package", p, small=True)
         folder.clicked.connect(lambda: self._pick(folder=True))
         archive.clicked.connect(lambda: self._pick(folder=False))
-        self.body.addLayout(hbox(folder, archive, None))
-        self.body.addLayout(self.note("info", "Desde una URL git: casebook pack install <url>. Fuentes a mano: "
-                                              "casebook source add, o Ajustes → Fuentes en el visor."))
+        # Mientras se revisa un pack, la vista previa ocupa el lugar del estado actual y de los botones.
+        self.pickers = QWidget()
+        v = vbox(spacing=12)
+        v.addLayout(hbox(folder, archive, None))
+        v.addLayout(self.note("info", "Desde una URL git: casebook pack install <url>. Fuentes a mano: "
+                                      "casebook source add, o Ajustes → Fuentes en el visor."))
+        self.pickers.setLayout(v)
+        self.body.addWidget(self.pickers)
+        self.preview = QWidget()
+        self.preview_box = vbox(spacing=12)
+        self.preview.setLayout(self.preview_box)
+        self.preview.hide()
+        self.body.addWidget(self.preview)
+        self.pending: str | None = None
+        self.plugin_toggles: dict[str, Toggle] = {}
 
     def enter(self) -> None:
         self._show()
@@ -541,12 +552,127 @@ class PackPage(Page):
         except packs.PackError as exc:
             self.say(str(exc), "fail")
             return
-        yes = QMessageBox.StandardButton.Yes
-        if QMessageBox.question(self, "Instalar el pack", packs.summary_text(info)) != yes:
+        self._preview(path, info)
+
+    def _preview(self, path: str, info: dict) -> None:
+        """Lo que trae el pack, en filas como el resto del asistente; se aplica con «Instalar pack»."""
+        p = self.palette_
+        clear(self.preview_box)
+        self.pending = path
+        self.plugin_toggles = {}
+        installed = info["installed_version"]
+        if info["older"]:
+            chip = self.chip("Más viejo", "warn", "alert")
+        elif installed:
+            chip = self.chip("Actualización", "brand")
+        else:
+            chip = self.chip("Nuevo", "ok")
+        self.preview_box.addLayout(heading("Lo que trae el pack", f"instalado: {installed}" if installed else
+                                           "revísalo antes de instalarlo"))
+        card = self.card()
+        rows = RowList(inset=50)
+        rows.add(Row(p, f"{info['display_name']} {info['version']}", short_path(path), self.tile("package"), [], chip,
+                     mono=True))
+        ids = [s.split(" (")[0] for s in info["sources"]]
+        row = rows.add(Row(p, self._count(len(ids), "fuente", "fuentes"), ", ".join(ids) or "el pack no trae fuentes",
+                           self.tile("database")))
+        if info["sources"]:
+            tip(row.text, "\n".join(info["sources"]), "Fuente (proveedor)")
+        rows.add(Row(p, self._count(len(info["skills"]), "skill", "skills"), ", ".join(info["skills"]) or "ninguna",
+                     self.tile("cpu")))
+        if info["knowledge"]:
+            rows.add(Row(p, self._count(info["knowledge"], "entrada de conocimiento", "entradas de conocimiento"),
+                         "quedan pendientes de revisar y no pisan las existentes", self.tile("search")))
+        if info["domains"]:
+            rows.add(self._expandable(Row(p, self._count(len(info["domains"]), "dominio", "dominios"),
+                                          "la extensión de Chrome te pedirá permiso para leer sus sesiones",
+                                          self.tile("chrome")), info["domains"], mono=True))
+        for plugin in info["plugins"]:
+            provides = ", ".join(plugin.get("provides", []))
+            if plugin["missing"]:
+                where = "viene en el zip" if plugin.get("path") else f"pip install {plugin.get('pip', '')}".strip()
+                toggle = Toggle(p, True)
+                tip(toggle, "Es código: se instala con pip en el entorno de casebook. Sin él, las fuentes que "
+                            "lo usan no funcionan.", "Plugin del pack")
+                self.plugin_toggles[plugin["name"]] = toggle
+                right, text = [toggle], f"aporta {provides} · {where}"
+            else:
+                right, text = [self.chip("Instalado", "ok", "check")], f"aporta {provides}"
+            rows.add(Row(p, plugin["name"], text, self.tile("code"), right, mono=False))
+        if info["changes"]:
+            rows.add(self._expandable(Row(p, self._count(len(info["changes"]), "cambio", "cambios"),
+                                          "respecto al pack instalado", self.tile("refresh")), info["changes"]))
+        card.box.addWidget(rows)
+        self.preview_box.addWidget(card)
+        if info["older"]:
+            self.preview_box.addLayout(self.note("alert", f"Es más viejo que el instalado ({installed}): "
+                                                          "instalarlo vuelve atrás."))
+        self.pending_label = "Actualizar pack" if installed else "Instalar pack"
+        self.current_card.hide()
+        self.pickers.hide()
+        self.preview.show()
+        self.scroll.verticalScrollBar().setValue(0)
+        self.window_.refresh_buttons()
+
+    # Con un pack en revisión, el pie lo instala o lo descarta en vez de avanzar.
+    def primary_text(self) -> str:
+        return self.pending_label if self.pending else "Continuar"
+
+    def primary_icon(self) -> str | None:
+        return "check" if self.pending else "arrow-right"
+
+    def primary(self) -> None:
+        if self.pending:
+            self._apply()
+        else:
+            self.window_.next()
+
+    def extra_button(self) -> tuple[str, str, Callable[[], None]] | None:
+        return ("Cancelar", "x", self._cancel) if self.pending else None
+
+    @staticmethod
+    def _count(n: int, one: str, many: str) -> str:
+        return f"{n} {one if n == 1 else many}"
+
+    def _expandable(self, row: Row, items: list[str], mono: bool = False) -> Row:
+        """Una fila con chevron que abre la lista completa (dominios, cambios) sin cargar la vista."""
+        chevron = QPushButton()
+        chevron.setObjectName("Chevron")
+        chevron.setCursor(Qt.CursorShape.PointingHandCursor)
+        chevron.setIcon(line_icon("chevron-right", self.palette_.muted, 16))
+        row.right.addWidget(chevron)
+        box = QFrame()
+        box.setObjectName("Detail")
+        v = QVBoxLayout(box)
+        v.setContentsMargins(14, 10, 14, 12)
+        v.setSpacing(4)
+        for item in items:
+            v.addWidget(ElidingLabel("Mono", item) if mono else label(item, "RowText", wrap=True))
+        box.hide()
+        row.extra.addWidget(box)
+
+        def toggle() -> None:
+            box.setVisible(not box.isVisible())
+            chevron.setIcon(line_icon("chevron-down" if box.isVisible() else "chevron-right", self.palette_.muted, 16))
+
+        chevron.clicked.connect(toggle)
+        return row
+
+    def _cancel(self) -> None:
+        self.pending = None
+        self.preview.hide()
+        self.pickers.show()
+        self.current_card.show()
+        self.window_.refresh_buttons()
+
+    def _apply(self) -> None:
+        from .. import packs
+
+        path = self.pending
+        approved = {name for name, toggle in self.plugin_toggles.items() if toggle.isChecked()}
+        self._cancel()
+        if not path:
             return
-        approved = {pl["name"] for pl in info["plugins"] if pl["missing"] and QMessageBox.question(
-            self, "Plugin del pack", f"El pack trae el plugin {pl['name']}. Es código y se instala con pip. "
-                                     "¿Instalarlo?") == yes}
         if self.ctx.dry_run:
             self.say("Vista previa: no se instaló nada.", "info")
             return
