@@ -580,6 +580,11 @@ class PackPage(Page):
             tip(row.text, "\n".join(info["sources"]), "Fuente (proveedor)")
         rows.add(Row(p, self._count(len(info["skills"]), "skill", "skills"), ", ".join(info["skills"]) or "ninguna",
                      self.tile("cpu")))
+        if info.get("analysis_tools"):
+            rows.add(self._expandable(Row(p, self._count(len(info["analysis_tools"]), "tool para el análisis de Slack",
+                                                         "tools para el análisis de Slack"),
+                                          "el análisis automático puede usarlas, solo en lectura", self.tile("lock")),
+                                      info["analysis_tools"], mono=True))
         if info["knowledge"]:
             rows.add(Row(p, self._count(info["knowledge"], "entrada de conocimiento", "entradas de conocimiento"),
                          "quedan pendientes de revisar y no pisan las existentes", self.tile("search")))
@@ -1173,6 +1178,12 @@ class SlackPage(Page):
                                [self.watch]))
         self.body.addWidget(card)
         self.body.addSpacing(8)
+        self.body.addLayout(heading("Código local", "opcional · solo lectura"))
+        code = self.card()
+        self.code_list = RowList(inset=50)
+        code.box.addWidget(self.code_list)
+        self.body.addWidget(code)
+        self.body.addSpacing(8)
         again = button("Revisar de nuevo", "ghost", "refresh", p, small=True)
         again.clicked.connect(self._check)
         self.body.addLayout(heading("Lo que hace falta", note_widget=again))
@@ -1185,6 +1196,70 @@ class SlackPage(Page):
     def enter(self) -> None:
         if not self.entered:
             self._check()
+            self._code()
+
+    # --- código local
+
+    def _code(self) -> None:
+        def look() -> tuple[steps.Item, config.CodeRepo, list[str]]:
+            repo = steps.code_repo()
+            found = [] if steps.code_paths() else steps.find_code_candidates(repo)
+            return steps.code_status(), repo, found
+
+        self.run(look, self._show_code, None)
+
+    def _show_code(self, result: tuple[steps.Item, config.CodeRepo, list[str]]) -> None:
+        p = self.palette_
+        status, repo, found = result
+        self.code_list.clear()
+        configured = bool(steps.code_paths())
+        right = []
+        choose = button("Elegir carpeta…" if not configured else "Cambiar", "", "folder", p, small=True)
+        choose.clicked.connect(lambda _=False, r=repo: self._choose_code(r))
+        right.append(choose)
+        if configured:
+            drop = button("Quitar", "ghost", "x", p, small=True)
+            drop.clicked.connect(self._clear_code)
+            right.append(drop)
+        self.code_list.add(Row(p, tidy(status.text), tidy(status.detail), StatusDot(p, STATUS_KIND[status.status]),
+                               right, height=58))
+        for path in found:
+            use = button("Usar esta", "", "check", p, small=True)
+            use.clicked.connect(lambda _=False, v=path, r=repo: self._save_code(v, r))
+            self.code_list.add(Row(p, f"Encontré {repo.label}", path, self.tile("folder"), [use], mono=True,
+                                   height=58))
+
+    def _choose_code(self, repo: config.CodeRepo) -> None:
+        path = QFileDialog.getExistingDirectory(self, f"La carpeta de {repo.label}")
+        if path:
+            self._save_code(path, repo)
+
+    def _save_code(self, path: str, repo: config.CodeRepo) -> None:
+        if self.ctx.dry_run:
+            self.say("Vista previa: la carpeta no se guarda.", "info")
+            return
+        try:
+            saved = steps.set_code_paths(path)
+        except (OSError, ValueError) as exc:  # SettingError es un ValueError: ruta que no sirve
+            self.say(f"No se guardó esa carpeta: {exc}", "fail")
+            return
+        missing = steps.missing_markers(saved or "", repo)
+        if missing:
+            self.say(f"Guardada, pero no veo {', '.join(missing)} ahí: revisa que sea la carpeta correcta.", "warn")
+        else:
+            self.say("Listo: el análisis de Slack puede leer ese código (solo lectura).", "ok")
+        self._code()
+
+    def _clear_code(self) -> None:
+        if self.ctx.dry_run:
+            return
+        try:
+            steps.set_code_paths("")
+        except (OSError, ValueError) as exc:
+            self.say(f"No pude quitarla: {exc}", "fail")
+            return
+        self.say("El análisis ya no lee código local.", "info")
+        self._code()
 
     def _watch(self, on: bool) -> None:
         if self.ctx.dry_run:

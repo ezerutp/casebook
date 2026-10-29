@@ -63,6 +63,55 @@ def test_save_rejects_invalid_values(path, values, message):
     assert not path.exists()
 
 
+def test_code_paths_are_validated_and_saved(path, tmp_path):
+    code = tmp_path / "backend"
+    code.mkdir()
+    config.save({"slack.code_paths": f"{code}, {code}"}, path)  # sin repetidos
+    assert tomllib.loads(path.read_text())["slack"]["code_paths"] == str(code.resolve())
+    cfg = config.load(path)
+    assert config.code_dirs(cfg.slack_code_paths) == [str(code.resolve())]
+    config.save({"slack.code_paths": ""}, path)
+    assert config.load(path).slack_code_paths is None
+
+
+@pytest.mark.parametrize("value, message", [
+    ("relativa/código", "ruta absoluta"),
+    ("/", "raíz ni tu carpeta personal"),
+    ("~", "raíz ni tu carpeta personal"),
+    ("~/.ssh", "credenciales"),
+    ("/no/existe/de/verdad", "no es una carpeta"),
+    ("/tmp/con(paréntesis", "no puede llevar"),
+])
+def test_code_paths_rejects_unsafe_folders(path, value, message, tmp_path, monkeypatch):
+    (tmp_path / ".ssh").mkdir()
+    monkeypatch.setenv("HOME", str(tmp_path))
+    with pytest.raises(config.SettingError, match=message):
+        config.save({"slack.code_paths": value}, path)
+
+
+def test_code_paths_cannot_include_casebook_own_data(path, tmp_path, monkeypatch):
+    data = tmp_path / "share" / "casebook"  # las sesiones y las credenciales de casebook
+    data.mkdir(parents=True)
+    monkeypatch.setattr(config, "DATA_DIR", data)
+    with pytest.raises(config.SettingError, match="credenciales"):
+        config.save({"slack.code_paths": str(data.parent)}, path)
+
+
+def test_hand_written_bad_code_paths_do_not_stop_the_app_and_grant_nothing(path, tmp_path, monkeypatch):
+    good = tmp_path / "backend"
+    good.mkdir()
+    (tmp_path / "home").mkdir()
+    monkeypatch.setenv("HOME", str(tmp_path / "home"))
+    # Rutas inválidas a mano (relativa, raíz, carpeta personal, comodín): se descartan; la válida se conserva.
+    path.write_text(f'[slack]\ncode_paths = "relativa/x, /, ~, /tmp/a*b, {good}"\n')
+    assert config.load(path).slack_code_paths == str(good.resolve())
+    path.write_text('[slack]\ncode_paths = "/, ~"\n')
+    assert config.load(path).slack_code_paths is None  # nada válido: sin acceso, y arranca igual
+    # Una carpeta que ya no existe no impide arrancar (solo se exige que exista al guardar).
+    path.write_text(f'[slack]\ncode_paths = "{tmp_path / "borrada"}"\n')
+    assert config.load(path).slack_code_paths == str((tmp_path / "borrada").resolve())
+
+
 def test_load_tolerates_old_values_out_of_range(path):
     path.write_text("[db]\nmax_execution_ms = 300000\n")  # escrito a mano antes de que existieran los rangos
     assert config.load(path).db.max_execution_ms == 300_000

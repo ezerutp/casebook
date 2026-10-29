@@ -82,7 +82,11 @@ El instalador no usa sudo y se puede correr de nuevo cuando quieras. Los pasos:
 5. **Slack** (opcional). Para [vigilar el canal de soporte](uso.md#vigilar-el-canal-de-soporte) desde el
    visor: revisa que **Slack de escritorio** esté instalado y abierto, y que el **conector de Slack de claude.ai**
    esté conectado (si no, en Claude Code: `/mcp` → claude.ai Slack → Authenticate; no hace falta el admin).
-   Solo revisa; lo que falte no queda como pendiente.
+   Solo revisa; lo que falte no queda como pendiente. Aquí también puedes indicar la **carpeta con el código** del
+   equipo para que el análisis de Slack la lea (solo lectura; ver [Código local](configuracion.md#código-local-en-el-análisis-de-slack)):
+   el asistente la busca en tu carpeta personal con lo que declara el pack (`[slack.code]`: nombre de la carpeta y qué
+   tiene que contener), te la propone y avisa si no ve lo que esperaba. Es opcional y se puede omitir; la ruta es de
+   cada persona y queda en tu `config.toml`, no en el pack.
 6. **Inicio de sesión.** Valida las sesiones guardadas de OpenSearch y CloudWatch y te deja iniciar las que
    falten (un login en curso se puede cancelar). Se salta si ninguna fuente inicia sesión en el navegador.
 7. **Listo.** Lo pendiente, si algo, y los siguientes pasos.

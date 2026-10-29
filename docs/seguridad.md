@@ -29,7 +29,16 @@
   escritorio (como `dbus-monitor`): solo mira de qué app y canal son, no guarda su texto. Lee el canal con el
   conector de Slack de claude.ai a través de `claude -p`; el paquete no ve ni guarda credenciales de Slack. Solo se permiten las tools
   de lectura del conector (`--allowedTools`) y cada llamada niega explícitamente las de escritura
-  (`--disallowedTools`: enviar o programar mensajes, reacciones, canvas, listas, subir archivos). `claude -p` corre
+  (`--disallowedTools`: enviar o programar mensajes, reacciones, canvas, listas, subir archivos). El análisis también
+  puede buscar y leer cards con el conector de Jira de claude.ai (solo `searchJiraIssuesUsingJql`, `getJiraIssue` y
+  `getAccessibleAtlassianResources`); crear, editar, comentar o mover cards y escribir en Confluence queda negado.
+  Con `slack.code_paths` configurado, el análisis también lee el código local, solo lectura: una regla
+  `Read(//ruta/**)` por carpeta limita `Read`, `Grep` y `Glob` a esa carpeta y el resto del disco sigue negado; dentro
+  de ella se niegan los archivos que suelen guardar credenciales (`.env`, `*.pem`, `*.key`, `*.tfvars`, `id_rsa*`,
+  `.git/config`, `application-dev*.properties`, `*credentials*.sh|json|yml…`, `*secrets*.*`…). `Bash`, `Write` y `Edit` siguen negados, así que no ejecuta ni modifica nada, y no se aceptan
+  carpetas que incluyan los datos de casebook, `~/.ssh` o `~/.aws`. El pack puede sumar tools de documentación con
+  `[slack.triage] allowed_tools`: solo nombres exactos de tools de lectura (se rechazan las que por su nombre
+  escriben, como `create…`, `delete…` o `refund…`), nada de lo que está negado, y `pack install` muestra cuáles trae. `claude -p` corre
   fuera del repo
   (`~/.local/share/casebook/slack-watch/`). El contenido del canal se trata como datos, no como
   instrucciones. El estado (`slack-watch.json`) guarda cursores, autores y resultados, no el texto de los mensajes;

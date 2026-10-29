@@ -1,6 +1,7 @@
 """Config en capas: valores de fábrica neutros, el pack activo y config.toml del usuario."""
 import json
 import shutil
+from pathlib import Path
 
 import anyio
 import pytest
@@ -138,3 +139,17 @@ def test_demo_pack_in_repo_is_valid(tmp_path):
     pack = packs.install(PACK.parent)
     assert (pack.name, pack.version) == ("acme", "1.0.0")
     assert json.dumps(sorted(config.load(tmp_path / "x.toml").opensearch)) == '["prod", "prod-archive"]'
+
+
+def test_pack_install_preview_lists_the_tools_it_gives_the_slack_analysis(tmp_path):
+    fixture = Path(__file__).parent / "fixtures" / "pack-acme"
+    folder = tmp_path / "pack"
+    shutil.copytree(fixture, folder)
+    plain = packs.describe(packs.open_bundle(str(folder)))
+    assert plain["analysis_tools"] == [] and "Análisis de Slack" not in packs.summary_text(plain)
+    toml = folder / "pack.toml"
+    toml.write_text(toml.read_text().replace(
+        '[slack.triage]\n', '[slack.triage]\nallowed_tools = ["mcp__claude_ai_X__docs"]\n', 1))
+    info = packs.describe(packs.open_bundle(str(folder)))
+    assert info["analysis_tools"] == ["mcp__claude_ai_X__docs"]
+    assert "Análisis de Slack: además puede usar (solo lectura) mcp__claude_ai_X__docs" in packs.summary_text(info)

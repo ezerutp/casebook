@@ -5,7 +5,7 @@ from pathlib import Path
 
 import pytest
 
-from casebook import native_host
+from casebook import config, native_host
 from casebook.setup import __main__ as entry
 from casebook.setup import steps
 
@@ -381,3 +381,127 @@ def test_without_browser_sources_the_wizard_skips_extension_and_logins(ctx, monk
     assert console_ui.run(ctx, out) == 0
     text = out.export_text()
     assert "Sin pack activo" in text and text.count("no hace falta") == 2
+
+
+# --- código local del análisis de Slack -------------------------------------------------------------------------
+
+
+
+@pytest.fixture
+def code_env(tmp_path, monkeypatch):
+    """config.toml en un temporal y un repo «backend» de mentira bajo un home de mentira."""
+    monkeypatch.setattr(config, "CONFIG_PATH", tmp_path / "cfg" / "config.toml")
+    home = tmp_path / "home"
+    repo = home / "Docs" / "Work" / "Acme" / "backend"
+    (repo / "src").mkdir(parents=True)
+    (repo / "README.md").write_text("")
+    return home, repo, config.CodeRepo(label="el repo backend", names=["backend"], markers=["src", "README.md"])
+
+
+def test_pack_declares_how_to_recognize_the_code_repo(tmp_path):
+    path = tmp_path / "config.toml"
+    path.write_text('[slack.code]\nlabel = "el repo X"\nnames = ["x"]\nmarkers = ["src"]\n')
+    repo = config.load(path).slack_code
+    assert (repo.label, repo.names, repo.markers) == ("el repo X", ["x"], ["src"])
+    for bad in ('rutas = ["x"]', 'names = "x"', 'markers = [1]'):
+        path.write_text(f"[slack.code]\n{bad}\n")
+        with pytest.raises(config.SettingError, match="slack.code"):
+            config.load(path)
+
+
+def test_find_code_candidates_looks_for_name_and_markers(code_env):
+    home, repo, spec = code_env
+    (home / "otro" / "backend").mkdir(parents=True)  # mismo nombre, sin lo que el pack espera
+    (home / "node_modules" / "backend" / "src").mkdir(parents=True)  # carpeta de dependencias: no se recorre
+    (home / "node_modules" / "backend" / "README.md").write_text("")
+    (home / ".oculta" / "backend" / "src").mkdir(parents=True)
+    (home / ".oculta" / "backend" / "README.md").write_text("")
+    (repo / "src" / "backend").mkdir()  # dentro del repo encontrado no se sigue buscando
+    assert steps.find_code_candidates(spec, home) == [str(repo)]
+    assert steps.find_code_candidates(config.CodeRepo(), home) == []  # sin nombres no hay búsqueda
+
+
+def test_set_code_paths_saves_validates_and_reports_status(code_env):
+    home, repo, spec = code_env
+    assert steps.code_status().status == steps.INFO and steps.code_paths() is None
+    assert steps.set_code_paths(str(repo)) == str(repo.resolve())
+    assert steps.code_paths() == str(repo.resolve()) and steps.code_status().status == steps.OK
+    assert steps.missing_markers(str(repo), spec) == []
+    assert steps.missing_markers(str(home), spec) == ["src", "README.md"]
+    (repo / "src").rmdir()
+    (repo / "README.md").unlink()
+    repo.rmdir()
+    assert steps.code_status().status == steps.WARN
+    with pytest.raises(config.SettingError):
+        steps.set_code_paths("relativa/x")
+    assert steps.set_code_paths("") is None and steps.code_paths() is None
+
+
+def _wizard(ctx, monkeypatch, answers):
+    from rich.console import Console
+
+    from casebook.setup import console as console_ui
+
+    out = Console(record=True, width=110)
+    wizard = console_ui.Wizard(ctx, out)
+    wizard.interactive = True
+    queue = iter(answers)
+    monkeypatch.setattr(wizard, "ask", lambda question: next(queue))
+    return wizard, out
+
+
+def test_console_asks_for_the_code_folder_and_saves_it(ctx, code_env, monkeypatch):
+    home, repo, spec = code_env
+    monkeypatch.setattr(steps, "code_repo", lambda: spec)
+    monkeypatch.setattr(steps, "find_code_candidates", lambda repo_spec: [str(repo)])
+    wizard, out = _wizard(ctx, monkeypatch, [str(repo)])
+    wizard.code()
+    assert steps.code_paths() == str(repo.resolve())
+    assert "puede leer el repo backend" in out.export_text()
+
+
+def test_console_code_step_can_be_skipped_and_retries_a_bad_path(ctx, code_env, monkeypatch):
+    home, repo, spec = code_env
+    monkeypatch.setattr(steps, "code_repo", lambda: spec)
+    monkeypatch.setattr(steps, "find_code_candidates", lambda repo_spec: [])
+    wizard, out = _wizard(ctx, monkeypatch, ["Omitir por ahora"])
+    wizard.code()
+    assert steps.code_paths() is None
+    # Una ruta que no sirve se explica y vuelve a preguntar; después se omite.
+    wizard, out = _wizard(ctx, monkeypatch, ["Escribir otra ruta", "relativa/x", "Omitir por ahora"])
+    wizard.code()
+    assert steps.code_paths() is None and "No se guardó esa carpeta" in out.export_text()
+
+
+def test_console_code_step_only_reports_without_a_terminal_or_when_already_set(ctx, code_env, monkeypatch):
+    home, repo, spec = code_env
+    wizard, out = _wizard(ctx, monkeypatch, [])
+    wizard.interactive = False
+    wizard.code()  # no pregunta nada (ask sin respuestas fallaría)
+    steps.set_code_paths(str(repo))
+    wizard.interactive = True
+    wizard.code()  # ya configurado: solo lo muestra
+    assert "El análisis puede leer" in out.export_text()
+
+
+def test_gui_slack_page_shows_candidates_and_saves_the_choice(ctx, code_env, monkeypatch):
+    pytest.importorskip("PySide6")
+    monkeypatch.setenv("QT_QPA_PLATFORM", "offscreen")
+    from PySide6.QtWidgets import QApplication
+
+    from casebook.setup import gui
+
+    home, repo, spec = code_env
+    _fast_checks(monkeypatch)
+    app = QApplication.instance() or QApplication([])
+    window = gui.InstallerWindow(ctx, gui.DARK)
+    page = next(p for p in window.pages if isinstance(p, gui.SlackPage))
+    page._show_code((steps.code_status(), spec, [str(repo)]))
+    assert len(page.code_list.rows) == 2  # el estado y el repo que encontró
+    page._save_code(str(repo), spec)
+    gui.QThreadPool.globalInstance().waitForDone(5000)
+    app.processEvents()
+    assert steps.code_paths() == str(repo.resolve())
+    page._clear_code()
+    assert steps.code_paths() is None
+    window.close()

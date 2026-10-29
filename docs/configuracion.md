@@ -58,6 +58,7 @@ ask_lookback_on_enable = true # preguntar ventana de tiempo al encender el toggl
 poll_model = "haiku"       # modelo que trae los mensajes nuevos
 analysis_model = "sonnet"  # modelo del triage de cada pedido
 max_analyses_per_day = 50
+code_paths = "/home/yo/repos/backend"  # carpetas con el código local, separadas por coma: el análisis las lee (solo lectura)
 
 [doctor]                      # normalmente los trae el pack
 shell_aliases = ["db-prod"]   # alias de shell que el equipo espera tener (aviso si faltan)
@@ -116,7 +117,10 @@ environment = "prod"                   # los esquemas quedan en el conocimiento 
 skill = "acme-triage"                  # la skill que lo guía (vacío = sin skill)
 escalation = "ticket"                  # el resultado que pide una card (el análisis trae su título)
 escalation_label = "Ticket"
-reply_style = "en español, lista para pegar en el hilo"
+reply_style = "en español, lista para pegar en el hilo"  # el análisis ya la pide corta (máx. 4 frases); esto fija idioma y tono
+investigation_skill = "acme-investigation"  # opcional: la skill de investigación (método y recetas) que también carga
+max_queries = 8                        # tope de consultas a las fuentes por análisis
+allowed_tools = ["mcp__claude_ai_Acme__search_docs"]  # tools extra de solo lectura (documentación); nombres exactos
 
 [slack.triage.outcomes]                # los resultados posibles y cómo se muestran
 explain = "Se responde directo"
@@ -124,6 +128,17 @@ ticket = "Abrir ticket"
 need_info = "Falta información"
 not_issue = "No es un issue"
 ```
+
+### Código local en el análisis de Slack
+
+`slack.code_paths` (en tu `config.toml` o en Ajustes → Slack; es de cada máquina, no va en el pack) le da al
+análisis automático acceso de **solo lectura** a esas carpetas para entender cómo funciona algo o confirmar un posible
+bug. Tiene que ser una ruta absoluta de una carpeta que exista; no se aceptan la raíz, tu carpeta personal ni
+carpetas que incluyan credenciales (casebook, `~/.ssh`, `~/.aws`…). Si editas `config.toml` a mano con una ruta
+que no cumple, se ignora (sin dar acceso) y la app arranca igual; Ajustes y el asistente sí te dicen el motivo. Sin
+valor, el análisis no lee archivos. Cuándo usar
+el código, y cuándo la documentación, lo dice la skill del pack. Detalle de las protecciones en
+[Seguridad](seguridad.md).
 
 ## Proveedores
 
