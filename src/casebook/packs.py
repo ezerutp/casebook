@@ -235,6 +235,7 @@ def describe(bundle: Bundle) -> dict[str, Any]:
         "skills": skill_names(bundle.pack_dir),
         "knowledge": sum(len(json.loads(p.read_text())) for p in (bundle.pack_dir / "knowledge").glob("*.json")),
         "domains": _domains(cfg),
+        "analysis_tools": list(cfg.slack_triage.allowed_tools),
         "plugins": [],
         "installed_version": None,
         "older": False,
@@ -255,6 +256,9 @@ def describe(bundle: Bundle) -> dict[str, Any]:
         old_skills, new_skills = set(skill_names(current.parent)), set(info["skills"])
         info["changes"] += [f"skill nueva: {s}" for s in sorted(new_skills - old_skills)]
         info["changes"] += [f"skill quitada: {s}" for s in sorted(old_skills - new_skills)]
+        old_tools = set(old_cfg.slack_triage.allowed_tools)
+        info["changes"] += [f"tool nueva para el análisis de Slack: {t}"
+                            for t in info["analysis_tools"] if t not in old_tools]
         if current.read_text() != (bundle.pack_dir / "pack.toml").read_text():
             info["changes"].append("pack.toml cambió")
         info["changes"] += [f"skill actualizada: {s}" for s in sorted(new_skills & old_skills)
@@ -277,6 +281,8 @@ def summary_text(info: dict[str, Any]) -> str:
         lines.append(f"  Conocimiento: {info['knowledge']} entradas semilla (pending, no pisan las existentes)")
     if info["domains"]:
         lines.append(f"  Dominios:     {', '.join(info['domains'])} (la extensión pedirá permiso)")
+    if info.get("analysis_tools"):
+        lines.append(f"  Análisis de Slack: además puede usar (solo lectura) {', '.join(info['analysis_tools'])}")
     for p in info["plugins"]:
         state = "falta instalarlo" if p["missing"] else "ya instalado"
         where = f"incluido en el zip ({p['path']})" if p.get("path") else p.get("pip", "")

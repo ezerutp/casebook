@@ -18,7 +18,7 @@ from rich.rule import Rule
 from rich.table import Table
 from rich.text import Text
 
-from .. import native_host
+from .. import config, native_host
 from . import steps
 
 ACCENT, OK, WARN, FAIL, MUTED, BORDER = "#5b8cff", "#3fcf8e", "#ffb84d", "#ff6b6b", "#8b95a3", "#343b48"
@@ -284,7 +284,46 @@ class Wizard:
             items = steps.slack_checks()
         # Opcional: lo que falta no va a los pendientes del final.
         self.items(items, collect=False)
+        self.code()
         self.done.append(True)
+
+    def code(self) -> None:
+        """Opcional: propone la carpeta del código para el análisis de Slack; sin terminal solo informa."""
+        status = steps.code_status()
+        if not self.interactive or self.ctx.dry_run or steps.code_paths():
+            self.items([status], collect=False)
+            return
+        repo = steps.code_repo()
+        self.c.print(Padding(Text.assemble(
+            ("Código local (opcional). ", "bold"),
+            f"El análisis de Slack puede leer {repo.label} para entender cómo funciona algo o confirmar un bug. "
+            "Solo lectura, sin credenciales ni ejecutar nada. " + (f"Es {repo.hint}." if repo.hint else "")), (1, 2)))
+        with self.c.status(f"Buscando {repo.label}…", spinner="dots"):
+            found = steps.find_code_candidates(repo)
+        other, skip = "Escribir otra ruta", "Omitir por ahora"
+        while True:
+            choice = self.ask(questionary.select(
+                f"¿Dónde está {repo.label}?", choices=[*found, other, skip], style=QUESTION_STYLE))
+            if choice == skip:
+                self.items([status], collect=False)
+                return
+            if choice == other:
+                choice = self.ask(questionary.path("Carpeta:", only_directories=True, style=QUESTION_STYLE)).strip()
+                if not choice:
+                    continue
+            try:
+                saved = steps.set_code_paths(choice)
+            except config.SettingError as exc:
+                self.items([steps.Item(steps.WARN, "No se guardó esa carpeta", str(exc))], collect=False)
+                continue
+            missing = steps.missing_markers(saved or "", repo)
+            if missing:
+                self.items([steps.Item(steps.WARN, f"Guardada, pero no veo {', '.join(missing)} ahí",
+                                       "revisa que sea la carpeta correcta (Ajustes → Slack → Código local)")],
+                           collect=False)
+            else:
+                self.items([steps.code_status()], collect=False)
+            return
 
     def sessions(self) -> None:
         if not steps.login_systems():

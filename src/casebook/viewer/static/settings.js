@@ -23,6 +23,7 @@ const FIELDS = {
   "slack.poll_model": { label: "Modelo para leer el canal", help: "Solo trae los mensajes nuevos cuando llega una notificación: conviene el más barato." },
   "slack.analysis_model": { label: "Modelo para analizar", help: "El que hace el triage de cada pedido." },
   "slack.max_analyses_per_day": { label: "Análisis por día", help: "Pasado el tope, los pedidos quedan registrados sin analizar.", unit: "análisis" },
+  "slack.code_paths": { label: "Código local", help: "Carpetas con el código, separadas por coma. El análisis las lee <strong>solo en lectura</strong> (sin ejecutar ni modificar nada, y sin credenciales como <code>.env</code>) para entender cómo funciona algo o confirmar un posible bug. Vacío = no lee código.", placeholder: "/home/yo/repos/backend" },
   "db.max_execution_ms": { label: "Tiempo máximo de MySQL", help: "<code>MAX_EXECUTION_TIME</code> de cada consulta: la base la corta al pasarlo.", unit: "ms" },
 };
 
@@ -34,7 +35,7 @@ const SECTIONS = [
       "db.default_limit", "db.max_limit", "db.full_scan_max_rows", "db.plan_max_rows", "db.max_execution_ms"] },
   { id: "slack", title: "Slack", desc: "Vigilancia del canal de soporte: solo lectura, con el conector de claude.ai.",
     keys: ["slack.watch", "slack.channel_id", "slack.channel_name", "slack.backup_poll_minutes", "slack.default_lookback_minutes",
-      "slack.ask_lookback_on_enable", "slack.poll_model", "slack.analysis_model", "slack.max_analyses_per_day"] },
+      "slack.ask_lookback_on_enable", "slack.poll_model", "slack.analysis_model", "slack.max_analyses_per_day", "slack.code_paths"] },
   { id: "fuentes", title: "Fuentes", desc: "De dónde consulta Claude: las del pack del equipo y las que agregues aquí (van a tu config.toml). Una fuente nueva aparece en Claude al reiniciarlo." },
   { id: "credenciales", title: "Credenciales", desc: "El login sigue siendo en tu terminal (el prompt es oculto, no funciona con !). Aquí ves el estado y copias el comando." },
   { id: "conexiones", title: "Conexiones", desc: "Hosts y túneles. Se editan a mano en config.toml." },

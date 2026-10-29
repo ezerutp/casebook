@@ -45,7 +45,18 @@ path = "plugins/acme-logs"   # dentro del zip de `pack build`; o pip = "git+ssh:
 ```
 
 El resto de las tablas son las de `config.toml` ([Configuración](configuracion.md)): `[sources.*]`, `[slack]`,
-`[slack.triage]`, `[texts]`, `[card]` y `[doctor]`.
+`[slack.triage]`, `[slack.code]`, `[texts]`, `[card]` y `[doctor]`.
+
+`[slack.code]` le dice al asistente de instalación cómo reconocer el repo de código del equipo, para proponérselo a
+cada persona (la ruta es de cada máquina y no va en el pack):
+
+```toml
+[slack.code]
+label = "el repo backend"          # cómo se le dice en el asistente
+hint = "la carpeta que tiene src/ y README.md"
+names = ["backend", "api"]         # nombres que puede tener la carpeta
+markers = ["src", "README.md"]     # lo que tiene que contener
+```
 
 Cada archivo de `knowledge/` es una lista de entradas con `source` (`mysql`, `opensearch` o `cloudwatch`),
 `environment`, `entity`, `kind`, `title`, `content` y `topics`. Se importan como `pending` y nunca pisan una entrada

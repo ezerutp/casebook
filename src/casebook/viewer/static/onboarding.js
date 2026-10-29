@@ -203,9 +203,7 @@ const onboarding = (() => {
             "nueva no tiene el etiquetado automático de Google Ads. Con activarlo, los clicks siguientes se atribuyen bien.",
         },
       });
-      slackState({ analyzing: false, today: 1, recent: [{ session_id: SLACK_ID, author: "Ana Ruiz", outcome: "explain", at: Date.now() / 1000 }] });
-      const li = await waitFor(() => $("#slack-recent li"));
-      if (li) gsap.from(li, { x: -16, opacity: 0, duration: D(0.5), ease: "back.out(2)", clearProps: "all" });
+      slackState({ analyzing: false, today: 1 });
     },
   };
 
@@ -285,7 +283,7 @@ const onboarding = (() => {
       backup_poll_minutes: 15, recent: [], manual: null, last_error: null, listener_error: null, last_poll: Date.now() / 1000 };
 
     // Lo real se va con una animación y queda el visor vacío, como recién instalado.
-    const out = [...document.querySelectorAll("#sessions > a, #slack-recent li")];
+    const out = [...document.querySelectorAll("#sessions > a")];
     const main = [$("#sessions-view"), $("#settings-view"), $("#skills-view"), $("#knowledge-view")].filter((el) => !el.hidden);
     await gsap.timeline()
       .to(out, { x: -18, opacity: 0, duration: D(0.28), stagger: D(0.025), ease: "power2.in" })

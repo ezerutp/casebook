@@ -53,9 +53,13 @@ lo trae el pack, y los demás ajustes están en **Ajustes → Slack**). Mientras
   la **revisión de respaldo** (`slack.backup_poll_minutes`, apagada por defecto), que lee el canal cada tantos
   minutos y sí gasta uso de tu suscripción en cada revisión.
 - Cada pedido nuevo (no los avisos, agradecimientos ni mensajes de bots) se analiza con `slack.analysis_model`
-  (Sonnet) y la skill de triage del pack (`[slack.triage]`): lee el hilo y las imágenes, hace consultas baratas si
-  hacen falta y deja una sesión **Slack · autor · hora** con el resultado (los que define el pack: respuesta
-  directa, escalar con una card, qué información falta…) y una respuesta sugerida para pegar en el hilo. Llega una notificación de escritorio.
+  (Sonnet) y las skills de triage e investigación del pack (`[slack.triage]`): lee el hilo y las imágenes,
+  investiga en las fuentes (hasta `max_queries` consultas acotadas) y busca en Jira si ya hay una card con el mismo
+  síntoma; si configuras `slack.code_paths`, también lee el código local (solo lectura) y la documentación que
+  indique el pack. Deja una sesión **Slack · autor · hora** con el resultado (los que define el pack: respuesta directa,
+  escalar con una card, qué información falta…), su **evidencia** (cada hallazgo enlaza a su consulta), la
+  **confianza**, lo **descartado** y una respuesta sugerida corta para pegar en el hilo, coherente con lo que
+  preguntó la persona. Llega una notificación de escritorio.
 - Los hilos analizados se siguen una semana: si alguien responde y el autor vuelve a preguntar, esa repregunta se
   analiza **en la misma sesión** que el mensaje principal: el análisis lee la conclusión anterior y dice si cambia.
 - **Revisar respuestas del hilo** (botón en la cabecera de una sesión de Slack): lee las respuestas del hilo

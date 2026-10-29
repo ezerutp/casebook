@@ -307,6 +307,51 @@ def test_poll_queues_new_messages_and_uses_the_poll_model(tmp_path):
     assert slack_watch.read_state()["last_error"] is None
 
 
+def test_readers_ask_for_the_full_message_text_not_a_cut_preview():
+    prompts = [slack_watch.poll_prompt("C1", "1.0", [("2.0", "2.5")]), slack_watch.latest_prompt("C1"),
+               slack_watch.thread_prompt("C1", "2.0", "2.5")]
+    for prompt in prompts:
+        assert "200 caracteres" not in prompt and "texto completo" in prompt
+
+
+def test_clean_keeps_long_messages_whole_up_to_the_cap():
+    long = "x" * 3000
+    polled = slack_watch.clean({"messages": [{"ts": "1.1", "user_id": "U1", "user_name": "Ana", "preview": long}],
+                                "replies": []})
+    assert polled["messages"][0]["preview"] == long
+    polled = slack_watch.clean({"messages": [{"ts": "1.1", "preview": "y" * 9000}], "replies": []})
+    assert len(polled["messages"][0]["preview"]) == slack_watch.MAX_PREVIEW
+
+
+def test_plain_makes_slack_markup_readable():
+    assert slack_watch.plain("Hi <!subteam^S0ACME123>, quick question") == "Hi @grupo, quick question"
+    assert slack_watch.plain("<!subteam^S1|@support-team> y <@U123> y <@U123|ana>") == "@support-team y @usuario y @ana"
+    assert slack_watch.plain("<!here> <!channel|channel> <!everyone>") == "@here @channel @everyone"
+    assert slack_watch.plain("en <#C123|soporte> y <#C456>") == "en #soporte y #canal"
+    assert slack_watch.plain("<https://acme.example/x|el reporte> <https://a.b/c> <mailto:a@b.co|a@b.co>") \
+        == "el reporte (https://acme.example/x) https://a.b/c a@b.co"
+    assert slack_watch.plain("<!date^1700000000^{date}|Nov 14>") == "Nov 14"
+    assert slack_watch.plain("a &lt; b &amp;&amp; c &gt; d") == "a < b && c > d"
+    assert slack_watch.plain("sin formato: 3 < 5 y a<b") == "sin formato: 3 < 5 y a<b"
+
+
+def test_plain_leaves_angle_brackets_that_are_not_slack_formatting():
+    html = 'pegué el script: <script src="https://cdn.acme.example/x.js"></script> y no carga'
+    assert slack_watch.plain(html) == html
+    assert slack_watch.plain("si a <= b > c entonces <b>negrita</b>") == "si a <= b > c entonces <b>negrita</b>"
+    assert slack_watch.plain("Ana <ana@x.co> escribió <!here>") == "Ana <ana@x.co> escribió @here"
+    # Slack escapa el texto del usuario: `&lt;script&gt;` queda como texto, no como formato.
+    assert slack_watch.plain("&lt;script&gt; <@U1>") == "<script> @usuario"
+
+
+def test_clean_returns_readable_text():
+    polled = slack_watch.clean({"messages": [{"ts": "1.1", "user_id": "U1", "user_name": "Ana",
+                                              "preview": "Hi <!subteam^S1>, see <https://x.co|this>"}],
+                                "replies": [{"thread_ts": "1.1", "ts": "1.2", "preview": "<@U2> ok"}]})
+    assert polled["messages"][0]["preview"] == "Hi @grupo, see this (https://x.co)"
+    assert polled["replies"][0]["preview"] == "@usuario ok"
+
+
 def test_poll_error_is_shown_and_keeps_the_cursor(tmp_path):
     slack_watch.write_state({"channel_id": "C1", "last_ts": "1.000000"})
     w, _ = watcher(tmp_path, FakeRunner(slack_watch.ClaudeError("sin conector")))
@@ -364,6 +409,79 @@ def test_no_write_tool_is_ever_allowed():
     assert set(slack_watch.WRITE_TOOLS) <= set(slack_watch.DENIED_TOOLS)
     assert {"Bash", "Write", "Edit", "WebFetch"} <= set(slack_watch.DENIED_TOOLS)
     assert all("send" not in t and "add_" not in t and "update" not in t for t in slack_watch.READ_TOOLS)
+
+
+def test_analysis_reads_jira_but_never_writes_to_it():
+    assert {slack_watch.ATLASSIAN + "searchJiraIssuesUsingJql", slack_watch.ATLASSIAN + "getJiraIssue"} \
+        <= set(slack_watch.ANALYSIS_TOOLS)
+    assert slack_watch.ATLASSIAN + "createJiraIssue" in slack_watch.DENIED_TOOLS
+    assert slack_watch.ATLASSIAN + "addCommentToJiraIssue" in slack_watch.DENIED_TOOLS
+    assert not set(slack_watch.JIRA_WRITE_TOOLS) & set(slack_watch.ANALYSIS_TOOLS)
+    assert not set(slack_watch.JIRA_READ_TOOLS) & set(slack_watch.READ_TOOLS)  # el poll sigue solo con Slack
+
+
+def test_local_code_is_read_only_scoped_and_hides_credentials():
+    rules = slack_watch.code_rules(["/work/backend", "/work/docs"])
+    assert rules == ("Read(//work/backend/**)", "Read(//work/docs/**)")
+    denied = slack_watch.secret_denials(slack_watch.ANALYSIS_TOOLS + rules)
+    assert "Read(//work/backend/**/.env)" in denied and "Read(//work/docs/**/*.pem)" in denied
+    assert not slack_watch.secret_denials(slack_watch.ANALYSIS_TOOLS)  # sin código local no se agrega nada
+    # Nunca se abre Bash, Write ni Edit, ni Read/Grep/Glob sin ruta.
+    allowed = slack_watch.analysis_tools(config.Triage(), ["/work/backend"])
+    assert not {"Bash", "Write", "Edit", "Read", "Grep", "Glob"} & set(allowed)
+
+
+def test_credential_files_are_denied_inside_the_code_folders():
+    denied = slack_watch.secret_denials(("Read(//work/backend/**)",))
+    for name in (".env", ".env.*", "*.pem", ".git/config", "application-dev*.properties",
+                 "*credentials*.sh", "*secrets*.json", "service-account*.json"):
+        assert f"Read(//work/backend/**/{name})" in denied, name
+    # El código y la configuración de prod con placeholders se siguen pudiendo leer.
+    assert not any("application-prod" in rule or "*.java" in rule for rule in denied)
+
+
+def test_pack_tools_are_added_but_never_something_denied():
+    triage = config.Triage(allowed_tools=["mcp__claude_ai_X__docs", slack_watch.WRITE_TOOLS[0]])
+    allowed = slack_watch.analysis_tools(triage, [])
+    assert "mcp__claude_ai_X__docs" in allowed and slack_watch.WRITE_TOOLS[0] not in allowed
+
+
+def test_run_claude_denies_credentials_inside_the_code_folders(monkeypatch):
+    seen = {}
+
+    class Proc:
+        returncode = 0
+
+        def __init__(self, command, **kw):
+            seen["command"] = command
+
+        def communicate(self, timeout=None):
+            return json.dumps({"is_error": False, "structured_output": {"ok": True}}), ""
+
+    monkeypatch.setattr(slack_watch.subprocess, "Popen", Proc)
+    allowed = slack_watch.analysis_tools(config.Triage(), ["/work/backend"])
+    slack_watch.run_claude("p", "sonnet", {}, allowed, 10)
+    command = seen["command"]
+    assert "Read(//work/backend/**)" in command[command.index("--allowedTools") + 1].split(",")
+    denied = command[command.index("--disallowedTools") + 1].split(",")
+    assert "Read(//work/backend/**/.env)" in denied and "Bash" in denied
+
+
+def test_analysis_gets_the_configured_code_folders(tmp_path):
+    runner = FakeRunner(ANALYSIS)
+    w, _ = watcher(tmp_path, runner, slack_code_paths="/work/backend")
+    w.analyze(slack_watch.Job("2.000000", "2.000000", "U1", "Ana", "Hey team"))
+    call = runner.calls[0]
+    assert "Read(//work/backend/**)" in call["allowed"]
+    assert "Código local" in call["prompt"] and "/work/backend" in call["prompt"]
+
+
+def test_analysis_without_code_folders_keeps_the_usual_tools(tmp_path):
+    runner = FakeRunner(ANALYSIS)
+    w, _ = watcher(tmp_path, runner)
+    w.analyze(slack_watch.Job("2.000000", "2.000000", "U1", "Ana", "Hey team"))
+    assert runner.calls[0]["allowed"] == slack_watch.ANALYSIS_TOOLS
+    assert "Código local" not in runner.calls[0]["prompt"]
 
 
 def test_every_server_tool_is_explicitly_allowed_or_denied(tmp_path):

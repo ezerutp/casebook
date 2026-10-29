@@ -1,13 +1,9 @@
 // Panel de Slack en la barra lateral: toggle de la vigilancia (slack.watch en config.toml), estado del vigilante y
-// el análisis manual del último mensaje. El análisis de cada pedido queda como una sesión normal; aquí solo se
-// listan los últimos.
+// el análisis manual del último mensaje. El análisis de cada pedido queda como una sesión normal.
 
 const slackPanel = (() => {
   const panel = $("#slack-panel");
   const toggle = $("#slack-toggle");
-  // Las etiquetas de los resultados del triage llegan en /api/slack (las define el pack); estas son las propias.
-  const STATES = { skipped: "sin analizar (tope)", error: "falló" };
-  const label = (outcome) => STATES[outcome] || st?.outcomes?.[outcome] || outcome;
   let st = null;
 
   async function refresh() {
@@ -40,18 +36,6 @@ const slackPanel = (() => {
     status.title = st.enabled && st.last_notification ? `Última notificación: ${relTime(st.last_notification * 1000)}` : "";
     $("#slack-when").textContent = st.enabled && st.last_poll ? relTime(st.last_poll * 1000) : "";
     renderManual();
-    $("#slack-recent").replaceChildren(
-      ...st.recent.slice(0, 5).map((e) => {
-        const li = document.createElement("li");
-        li.className = [e.outcome || "", e.outcome && e.outcome === st?.escalation ? "escalation" : ""].join(" ").trim();
-        li.innerHTML = `<a><span class="who"></span><span class="what"></span></a>`;
-        $("a", li).href = `#/sessions/${e.session_id}`;
-        $(".who", li).textContent = `${e.follow_up ? "↩ " : ""}${e.author}`;
-        $(".what", li).textContent = e.outcome ? label(e.outcome) : "analizando…";
-        li.title = relTime(e.at * 1000);
-        return li;
-      })
-    );
   }
 
   // Se reconstruye solo si cambió el error, así un «Ver detalle» abierto no se cierra con cada refresco.

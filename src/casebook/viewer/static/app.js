@@ -371,7 +371,26 @@ function slackCard(ev, p) {
     body.append(row);
   };
   field("Hipótesis", r.hypothesis);
+  field("Confianza", { high: "alta", medium: "media", low: "baja" }[r.confidence] || r.confidence);
   field("Falta", r.missing_data);
+  const list = (label, items, cls) => {
+    if (!items?.length) return null;
+    body.append(node("p", "slack-label", label));
+    const ul = node("ul", cls);
+    body.append(ul);
+    return ul;
+  };
+  const evidence = list("Evidencia", r.evidence, "slack-steps");
+  r.evidence?.forEach((e) => {
+    const li = node("li");
+    linkQueryIds(li, e?.query_id ? `${e.finding} (q ${e.query_id})` : String(e?.finding || ""));
+    if (e?.ref) li.append(" ", node("code", "slack-ref", e.ref));
+    evidence.append(li);
+  });
+  const discarded = list("Descartado", r.discarded, "slack-steps");
+  r.discarded?.forEach((d) => discarded.append(node("li", null, d)));
+  const similar = list("Cards similares", r.similar_cards, "slack-steps");
+  r.similar_cards?.forEach((c) => similar.append(node("li", null, c)));
   if (r.steps?.length) {
     body.append(node("p", "slack-label", "Pasos"));
     const ol = node("ol", "slack-steps");
@@ -544,7 +563,7 @@ async function openSession(id) {
     return;
   }
   head.innerHTML = `<div class="head-row">
-      <div class="titles"><h2><span class="title"></span><span class="badge running" hidden></span></h2><p></p></div>
+      <div class="titles"><h2><span class="session-id" tabindex="0"></span><span class="title"></span><span class="badge running" hidden></span></h2><p></p></div>
       <div class="session-actions">
         <button class="thread-check" hidden><span class="btn-icon" data-icon="slack"></span><span class="label">Revisar respuestas del hilo</span></button>
         <a class="btn open-card" target="_blank" rel="noopener" hidden><span class="btn-icon" data-icon="external"></span>Abrir card</a>
@@ -669,6 +688,12 @@ function renderHead() {
   if (!session || !$(".stats", head)) return;
 
   $(".title", head).textContent = session.name;
+  // El número sirve para decirle al agente (en el chat) sobre qué sesión trabajar.
+  const sid = $(".session-id", head);
+  sid.textContent = `#${session.id}`;
+  sid.title = `Número de la sesión. Úsalo para pedirle al agente que trabaje sobre esta sesión en concreto, `
+    + `por ejemplo: «re-analiza la sesión ${session.id} de casebook más a profundidad».`;
+  sid.setAttribute("aria-label", `Sesión ${session.id}. ${sid.title}`);
   const jiraLink = $(".open-card", head);
   jiraLink.hidden = !(state.meta.jira_base_url && session.card);
   if (!jiraLink.hidden) jiraLink.href = state.meta.jira_base_url + encodeURIComponent(session.card);

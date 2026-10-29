@@ -16,6 +16,8 @@ import re
 import shutil
 import subprocess
 import sys
+import time
+from collections import deque
 from dataclasses import asdict, dataclass, field
 from pathlib import Path
 
@@ -468,6 +470,79 @@ def slack_watch() -> bool:
 def set_slack_watch(on: bool) -> None:
     """Prende o apaga la vigilancia del canal: el mismo ajuste que el toggle del panel Slack del visor."""
     config.save({"slack.watch": on})
+
+
+# --- código local ----------------------------------------------------------------------------------------------
+
+# Carpetas que no se recorren al buscar el repo: ocultas (salvo que sean el destino), dependencias y compilados.
+_NOISE = {"node_modules", "target", "build", "dist", "venv", "site-packages", "__pycache__", "snap", "Library"}
+SEARCH_DEPTH = 6  # niveles bajo la carpeta personal
+SEARCH_BUDGET_S = 4.0  # la búsqueda no puede demorar el asistente
+SEARCH_MAX_DIRS = 40_000
+
+
+def code_repo() -> config.CodeRepo:
+    return config.load().slack_code
+
+
+def code_paths() -> str | None:
+    return config.load().slack_code_paths
+
+
+def missing_markers(path: str, repo: config.CodeRepo) -> list[str]:
+    """Lo que el pack espera encontrar en la carpeta y no está: sirve para avisar «¿seguro que es esta?»."""
+    return [m for m in repo.markers if not (Path(path).expanduser() / m).exists()]
+
+
+def find_code_candidates(repo: config.CodeRepo, home: Path | None = None, limit: int = 5) -> list[str]:
+    """Busca bajo la carpeta personal las carpetas con alguno de los nombres del pack que contengan lo que el pack
+    espera. Recorre por niveles (lo cercano primero), con tope de tiempo y de carpetas; sin nombres no busca."""
+    wanted = {n.lower() for n in repo.names}
+    if not wanted:
+        return []
+    home = home or Path.home()
+    found: list[str] = []
+    queue: deque[tuple[Path, int]] = deque([(home, 0)])
+    deadline = time.monotonic() + SEARCH_BUDGET_S
+    visited = 0
+    while queue and len(found) < limit and visited < SEARCH_MAX_DIRS and time.monotonic() < deadline:
+        directory, depth = queue.popleft()
+        try:
+            children = sorted((e for e in os.scandir(directory) if e.is_dir(follow_symlinks=False)),
+                              key=lambda e: e.name)
+        except OSError:
+            continue
+        for entry in children:
+            visited += 1
+            if entry.name.lower() in wanted and not missing_markers(entry.path, repo):
+                found.append(entry.path)
+                continue  # el repo encontrado no se recorre por dentro
+            if depth + 1 < SEARCH_DEPTH and not entry.name.startswith(".") and entry.name not in _NOISE:
+                queue.append((Path(entry.path), depth + 1))
+    return found[:limit]
+
+
+def set_code_paths(value: str) -> str | None:
+    """Guarda la carpeta (o carpetas) de código con las mismas validaciones que Ajustes. Vacío la quita. Devuelve lo
+    guardado, ya normalizado, o lanza config.SettingError si no sirve."""
+    saved = config.BY_KEY["slack.code_paths"].coerce(value)
+    config.save({"slack.code_paths": saved or ""})
+    return saved
+
+
+def code_status() -> Item:
+    """Cómo está el código local: configurado (y si existe) o pendiente."""
+    current = code_paths()
+    repo = code_repo()
+    if not current:
+        return Item(INFO, "Código local: sin configurar",
+                    f"el análisis de Slack no lee código hasta que elijas {repo.label} (opcional; también en "
+                    "Ajustes → Slack → Código local)", key="code-paths")
+    gone = [d for d in config.code_dirs(current) if not Path(d).is_dir()]
+    if gone:
+        return Item(WARN, f"No encuentro {', '.join(gone)}", "revisa la ruta en Ajustes → Slack → Código local",
+                    key="code-paths")
+    return Item(OK, f"El análisis puede leer {repo.label} (solo lectura)", current, key="code-paths")
 
 
 def extension_install(ctx: Context) -> list[Item]:

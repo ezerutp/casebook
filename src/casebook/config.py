@@ -16,6 +16,7 @@ from __future__ import annotations
 
 import copy
 import os
+import re
 import tomllib
 from dataclasses import dataclass, field, fields
 from pathlib import Path
@@ -94,6 +95,24 @@ class Triage:
     escalation: str = "escalate"  # el resultado que pide una card (va con el campo `card` del análisis)
     escalation_label: str = "Card"
     reply_style: str = "en el idioma del hilo, lista para que la persona la pegue"
+    # La skill de investigación del pack (método y recetas por tipo de caso): el análisis la carga además de `skill`
+    # para sostener el resultado con evidencia de las fuentes; vacía = solo la skill de triage.
+    investigation_skill: str = ""
+    max_queries: int = 8  # tope de consultas a las fuentes (OpenSearch, MySQL, CloudWatch) por análisis
+    # Tools extra de solo lectura que el análisis puede usar (por ejemplo, la de documentación de un conector de
+    # claude.ai). Nombres exactos `mcp__...`; lo que el análisis tiene negado no se puede habilitar desde aquí.
+    allowed_tools: list[str] = field(default_factory=list)
+
+
+@dataclass
+class CodeRepo:
+    """Cómo reconocer el repo de código del equipo (lo declara el pack en [slack.code]): el asistente de instalación
+    lo busca en la máquina y pide confirmarlo. La ruta en sí es de cada persona (slack.code_paths)."""
+
+    label: str = "el código fuente"
+    hint: str = ""  # qué carpeta es (por ejemplo, «la que tiene src/ y README.md»)
+    names: list[str] = field(default_factory=list)  # nombres de carpeta que puede tener
+    markers: list[str] = field(default_factory=list)  # archivos o carpetas que tiene que contener
 
 
 @dataclass
@@ -136,6 +155,10 @@ class Config:
     slack_poll_model: str = "haiku"
     slack_analysis_model: str = "sonnet"
     slack_max_analyses_per_day: int = 50
+    # Carpetas con el código fuente local, separadas por coma: el análisis las puede leer (solo lectura) para entender
+    # cómo funciona algo o confirmar un posible bug. Es de cada máquina, así que va en config.toml, no en el pack.
+    slack_code_paths: str | None = None
+    slack_code: CodeRepo = field(default_factory=CodeRepo)
     db: Database = field(default_factory=Database)
     opensearch: dict[str, OpenSearchEnv] = field(default_factory=dict)
     # Doctor: alias de shell que el equipo espera tener y qué decir cuando no se llega al servidor SSH.
@@ -208,11 +231,67 @@ class Setting:
         text = str(value).strip()
         if strict and self.choices and text not in self.choices:
             raise SettingError(f"{self.key}: tiene que ser uno de {', '.join(self.choices)}")
+        if self.key == "slack.code_paths":
+            return _code_paths(text, strict)
         if self.key == "jira.base_url":
             if strict and not text.startswith("https://"):
                 raise SettingError("jira.base_url: tiene que empezar con https://")
             text = text.rstrip("/") + "/"
         return text
+
+
+# Verbos de tools que cambian algo. El análisis automático lee texto de Slack (no confiable): si el pack le habilita
+# una tool, tiene que ser de lectura. Es una red de seguridad por nombre, no un permiso: la decisión es del pack.
+_WRITE_VERBS = {"create", "update", "delete", "remove", "refund", "send", "add", "edit", "write", "post", "upload",
+                "transition", "execute", "reply", "react", "publish", "trash", "share", "copy", "move", "set",
+                "assign", "merge", "push", "approve", "cancel", "archive", "invite", "complete", "schedule"}
+
+
+def _looks_like_write(tool: str) -> bool:
+    name = re.sub(r"([a-z0-9])([A-Z])", r"\1_\2", tool.rsplit("__", 1)[-1])
+    return any(word in _WRITE_VERBS for word in re.findall(r"[a-z0-9]+", name.lower()))
+
+
+def _private_dirs() -> tuple[Path, ...]:
+    return DATA_DIR, CONFIG_PATH.parent, *(Path.home() / d for d in (".ssh", ".aws", ".gnupg", ".claude"))
+
+
+def code_dirs(value: str | None) -> list[str]:
+    """Las carpetas de [slack] code_paths como lista (el valor es texto separado por comas)."""
+    return [part.strip() for part in (value or "").split(",") if part.strip()]
+
+
+def _code_path(raw: str, strict: bool) -> str:
+    path = Path(raw).expanduser()
+    if not path.is_absolute():
+        raise SettingError(f"slack.code_paths: «{raw}» tiene que ser una ruta absoluta")
+    if any(c in str(path) for c in "()*?[]{}"):
+        raise SettingError(f"slack.code_paths: «{raw}» no puede llevar ( ) * ? [ ] {{ }}")
+    path = path.resolve()
+    if strict and not path.is_dir():
+        raise SettingError(f"slack.code_paths: «{raw}» no es una carpeta")
+    if path in (Path("/"), Path.home().resolve()):
+        raise SettingError("slack.code_paths: no puede ser la raíz ni tu carpeta personal; elige la del código")
+    for private in _private_dirs():
+        private = private.resolve()
+        if private == path or path in private.parents:
+            raise SettingError(f"slack.code_paths: «{raw}» incluye {private}, que guarda credenciales")
+    return str(path)
+
+
+def _code_paths(text: str, strict: bool) -> str | None:
+    """Normaliza las carpetas de código. Se leen con permisos de solo lectura, así que se exige que existan, que no
+    sean la raíz ni la carpeta personal y que no incluyan credenciales; sus nombres van dentro de una regla de
+    permisos, por eso no pueden llevar paréntesis ni comodines. Al guardar (strict) lo inválido se rechaza con su
+    motivo; al leer el archivo se descarta sin dar acceso, para que un valor escrito a mano no impida arrancar."""
+    out: list[str] = []
+    for raw in code_dirs(text):
+        try:
+            out.append(_code_path(raw, strict))
+        except SettingError:
+            if strict:
+                raise
+    return ", ".join(dict.fromkeys(out)) or None
 
 
 def _target(cfg: Config, attr: str) -> tuple[Any, str]:
@@ -240,6 +319,7 @@ SETTINGS: tuple[Setting, ...] = (
     Setting("slack.poll_model", "slack_poll_model", str, choices=("haiku", "sonnet", "opus")),
     Setting("slack.analysis_model", "slack_analysis_model", str, choices=("haiku", "sonnet", "opus")),
     Setting("slack.max_analyses_per_day", "slack_max_analyses_per_day", int, 1, 500),
+    Setting("slack.code_paths", "slack_code_paths", str, optional=True),
     Setting("db.default_limit", "db.default_limit", int, 1, 10_000),
     Setting("db.max_limit", "db.max_limit", int, 1, 10_000),
     Setting("db.max_execution_ms", "db.max_execution_ms", int, 1_000, 120_000),
@@ -382,6 +462,26 @@ def load(path: Path | None = None, pack: Path | str | None = _ACTIVE) -> Config:
         cfg.slack_triage = Triage(**{**vars(Triage()), **triage})
         if cfg.slack_triage.escalation not in cfg.slack_triage.outcomes:
             raise SettingError("slack.triage.escalation tiene que ser uno de los outcomes")
+        extra = cfg.slack_triage.allowed_tools
+        if not isinstance(extra, list) or any(
+                not isinstance(t, str) or not t.startswith("mcp__") or "*" in t for t in extra):
+            raise SettingError("slack.triage.allowed_tools tiene que ser una lista de nombres exactos mcp__… "
+                               "(sin comodines)")
+        writes = [t for t in extra if _looks_like_write(t)]
+        if writes:
+            raise SettingError(f"slack.triage.allowed_tools: {', '.join(writes)} parece una tool que escribe; el "
+                               "análisis automático lee contenido que no es confiable y solo admite tools de lectura")
+    code = data.get("slack", {}).get("code", {})
+    if code:
+        known = {f.name for f in fields(CodeRepo)}
+        unknown = sorted(set(code) - known)
+        if unknown:
+            raise SettingError(f"slack.code: opción desconocida: {', '.join(unknown)}")
+        cfg.slack_code = CodeRepo(**{**vars(CodeRepo()), **code})
+        for key in ("names", "markers"):
+            value = getattr(cfg.slack_code, key)
+            if not isinstance(value, list) or not all(isinstance(v, str) and v for v in value):
+                raise SettingError(f"slack.code.{key} tiene que ser una lista de textos")
     doctor = data.get("doctor", {})
     cfg.doctor_aliases = [str(a) for a in doctor.get("shell_aliases", cfg.doctor_aliases)]
     cfg.network_hint = str(doctor.get("network_hint", cfg.network_hint))
