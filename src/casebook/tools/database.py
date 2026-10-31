@@ -80,6 +80,10 @@ def register(mcp: MCPServer, recorder: Recorder, cfg: Config, viewer_url: str | 
         # `env` solo cuando hay varias bases: con una sola, la consulta queda igual que antes.
         return {**values, **({"env": env} if len(cfg.mysql) > 1 else {}), "environment": environment(env)}
 
+    def meta(env: str, **values: Any) -> dict[str, Any]:
+        # El visor muestra meta.env en la tarjeta de la consulta: con varias bases, se ve contra cuál corrió.
+        return {**values, **({"env": env} if len(cfg.mysql) > 1 else {})}
+
     async def run(env: str, sql: str, kind: str, allow_expensive: bool = False) -> dict[str, Any]:
         db = get_client(env)
         return await anyio.to_thread.run_sync(db.query, sql, kind, allow_expensive)
@@ -96,7 +100,7 @@ def register(mcp: MCPServer, recorder: Recorder, cfg: Config, viewer_url: str | 
         with recorder.query("db_tables", params(env, pattern=pattern), sql) as q:
             data = await run(env, sql, "show")
             rows = data["rows"]
-            q.finish(["table"], rows)
+            q.finish(["table"], rows, meta(env))
         return summary.render(footer({"tables": [r[0] for r in rows]}, q))
 
     @tool
@@ -117,7 +121,7 @@ def register(mcp: MCPServer, recorder: Recorder, cfg: Config, viewer_url: str | 
                 for r in idx["rows"]
             ]
             index_table = {"name": "índices", "columns": ["key", "seq", "column", "non_unique"], "rows": index_rows}
-            q.finish(cols["columns"], cols["rows"], tables=[index_table])
+            q.finish(cols["columns"], cols["rows"], meta(env), tables=[index_table])
 
         cc = cols["columns"]
         columns = {r[cc.index("Field")]: r[cc.index("Type")] for r in cols["rows"]}
@@ -155,7 +159,7 @@ def register(mcp: MCPServer, recorder: Recorder, cfg: Config, viewer_url: str | 
             if data["plan"]:
                 tables.append({"name": "EXPLAIN", **data["plan"]})
             truncated = kind == "select" and len(rows) >= limit
-            q.finish(columns, rows, {"truncated": truncated}, tables=tables)
+            q.finish(columns, rows, meta(env, truncated=truncated), tables=tables)
 
         out = {"sql": final_sql, "row_count": len(rows), **summary.table(columns, rows)}
         if truncated:

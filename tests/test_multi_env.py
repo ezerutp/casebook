@@ -144,6 +144,8 @@ def test_tools_go_to_the_chosen_base(mcp):
     started = [e["payload"]["params"] for e in store.events(rec.session_id) if e["type"] == "query.started"]
     # El conocimiento guarda los esquemas por base: qa no pisa los de prod.
     assert [(p["env"], p["environment"]) for p in started] == [("qa", "qa/acme_qa"), ("default", "prod/acme")]
+    finished = [e["payload"]["meta"] for e in store.events(rec.session_id) if e["type"] == "query.finished"]
+    assert [m["env"] for m in finished] == ["qa", "default"]  # el visor lo muestra en cada tarjeta
 
 
 def test_tool_descriptions_list_the_bases(mcp):

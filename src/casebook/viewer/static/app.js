@@ -818,16 +818,19 @@ new ResizeObserver(sizeHead).observe($("#session-head"));
 // --- resumen ---------------------------------------------------------------------------------------------
 
 // De dónde leyó una consulta: índice, log group o tablas. Para db_select se sacan las tablas del SQL.
+// Con varias bases o varios CloudWatch la consulta trae params.env: va en el nombre, así `lead` de prod y
+// `lead` de qa no se suman como si fueran la misma tabla.
 function sourcesOf(p) {
   const svc = svcOf(p.tool);
   const params = p.params || {};
+  const where = (name) => (svc !== "os" && params.env ? `${name} (${params.env})` : name);
   if (svc === "os" && params.index) return [{ svc, name: params.index }];
-  if (svc === "cw" && params.log_group) return [{ svc, name: params.log_group }];
-  if (p.tool === "db_describe" && params.table) return [{ svc, name: params.table }];
+  if (svc === "cw" && params.log_group) return [{ svc, name: where(params.log_group) }];
+  if (p.tool === "db_describe" && params.table) return [{ svc, name: where(params.table) }];
   if (p.tool === "db_select") {
     const sql = p.query || params.sql || "";
     const names = new Set([...sql.matchAll(/\b(?:from|join)\s+`?([\w$.]+)`?/gi)].map((m) => m[1]));
-    return [...names].map((name) => ({ svc, name }));
+    return [...names].map((name) => ({ svc, name: where(name) }));
   }
   return [];
 }

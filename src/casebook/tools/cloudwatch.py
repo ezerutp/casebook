@@ -73,7 +73,7 @@ def register(mcp: MCPServer, recorder: Recorder, cfg: Config, viewer_url: str | 
         with recorder.query("cw_log_groups", with_env(env, {"search": search}), None) as q:
             groups = await client.log_groups(search)
             rows = [[g.name, g.label, g.stored_bytes] for g in groups]
-            q.finish(["name", "label", "storedBytes"], rows)
+            q.finish(["name", "label", "storedBytes"], rows, with_env(env, {}))
         return summary.render(footer({"log_groups": [r[0] for r in rows]}, q))
 
     @tool
@@ -92,7 +92,7 @@ def register(mcp: MCPServer, recorder: Recorder, cfg: Config, viewer_url: str | 
             q.finish(
                 ["log_group", "bytes", "cost_usd", "within_limit"],
                 [[log_group, est.bytes, est.cost_usd, est.within_limit]],
-                {"estimated_cost_usd": est.cost_usd},
+                with_env(env, {"estimated_cost_usd": est.cost_usd}),
             )
         return summary.render(
             footer(
@@ -178,7 +178,7 @@ def register(mcp: MCPServer, recorder: Recorder, cfg: Config, viewer_url: str | 
                 "estimated_cost_usd": result.estimated_cost_usd if result.estimated_cost_usd is not None else est_cost,
                 "backend_duration_ms": result.duration_ms,
             }
-            q.finish(columns, rows, meta)
+            q.finish(columns, rows, with_env(env, meta))
 
         # @ptr es largo y solo sirve para cw_context: va al final de cada fila.
         if "@ptr" in columns:
@@ -235,6 +235,6 @@ def register(mcp: MCPServer, recorder: Recorder, cfg: Config, viewer_url: str | 
         with recorder.query("cw_context", params, f"surrounding-logs de {external_id}") as q:
             records = recorder.redactor.value(await client.surrounding(external_id, ptr, events))
             columns, rows = table_from_records(records)
-            q.finish(columns, rows, raw=records)
+            q.finish(columns, rows, with_env(env, {}), raw=records)
         return summary.render(footer(summary.table(columns, rows, limit=60), q))
 
