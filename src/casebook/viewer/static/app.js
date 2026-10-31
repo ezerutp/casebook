@@ -1207,7 +1207,7 @@ function setStatus(el, cls, label) {
 
 // El color de la etiqueta del entorno (va después del ícono del servicio): prod (y prod-archive, production…) en rojo, para que se note; los nombres
 // conocidos con su color y cualquier otro, siempre el mismo de una paleta fija.
-const ENV_TONES = ["note", "slack", "accent", "ok"];
+const ENV_TONES = ["note", "ok"];  // sin azul ni naranja (MySQL y CloudWatch) ni rosa (se confunde con prod)
 function envTone(env) {
   const name = env.toLowerCase();
   if (/^(prod|prd|production|live)\b/.test(name)) return "prod";

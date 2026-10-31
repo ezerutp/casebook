@@ -574,12 +574,12 @@ main { min-width: 0; padding-bottom: 60px; overflow-wrap: anywhere; }
   white-space: nowrap;
 }
 .card .env-pill[data-tone="prod"] { --tone: var(--fail); }
-.card .env-pill[data-tone="qa"] { --tone: var(--run); }
-.card .env-pill[data-tone="staging"] { --tone: var(--accent); }
+/* qa en el color del texto (blanco en oscuro, casi negro en claro): neutro, no choca con ningún servicio y deja que
+   PROD sea lo que llama la atención. staging en violeta: el azul es el de MySQL. */
+.card .env-pill[data-tone="qa"] { --tone: var(--text); }
+.card .env-pill[data-tone="staging"] { --tone: var(--svc-note); }
 .card .env-pill[data-tone="dev"], .card .env-pill[data-tone="ok"] { --tone: var(--ok); }
 .card .env-pill[data-tone="note"] { --tone: var(--svc-note); }
-.card .env-pill[data-tone="slack"] { --tone: var(--svc-slack); }
-.card .env-pill[data-tone="accent"] { --tone: var(--accent); }
 
 /* El nombre de la tool, como la etiqueta del entorno: fondo sólido del color del servicio (el de la barra de la
    tarjeta) y monoespaciada, para que se distinga del entorno. Sin servicio conocido, gris. */
