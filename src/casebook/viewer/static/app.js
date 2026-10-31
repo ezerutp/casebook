@@ -818,12 +818,12 @@ new ResizeObserver(sizeHead).observe($("#session-head"));
 // --- resumen ---------------------------------------------------------------------------------------------
 
 // De dónde leyó una consulta: índice, log group o tablas. Para db_select se sacan las tablas del SQL.
-// Con varias bases o varios CloudWatch la consulta trae params.env: va en el nombre, así `lead` de prod y
-// `lead` de qa no se suman como si fueran la misma tabla.
+// La consulta trae params.env: va en el nombre (salvo «default», el de una fuente sin `environment`), así `lead`
+// de prod y `lead` de qa no se suman como si fueran la misma tabla.
 function sourcesOf(p) {
   const svc = svcOf(p.tool);
   const params = p.params || {};
-  const where = (name) => (svc !== "os" && params.env ? `${name} (${params.env})` : name);
+  const where = (name) => (svc !== "os" && params.env && params.env !== "default" ? `${name} (${params.env})` : name);
   if (svc === "os" && params.index) return [{ svc, name: params.index }];
   if (svc === "cw" && params.log_group) return [{ svc, name: where(params.log_group) }];
   if (p.tool === "db_describe" && params.table) return [{ svc, name: where(params.table) }];
@@ -1160,7 +1160,7 @@ function queryCard(ev, p) {
   }
   $(".tool", el).textContent = p.tool;
   const env = p.params?.env;
-  if (env) {
+  if (env && env !== "default") {  // «default»: una fuente sin `environment`, no dice nada
     const pill = $(".env-pill", el);
     pill.hidden = false;
     pill.textContent = env.toUpperCase();

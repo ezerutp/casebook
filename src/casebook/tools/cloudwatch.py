@@ -54,8 +54,8 @@ def register(mcp: MCPServer, recorder: Recorder, cfg: Config, viewer_url: str | 
     origins: dict[str, str] = {}
 
     def with_env(env: str, values: dict[str, Any]) -> dict[str, Any]:
-        # `env` solo cuando hay varios: con uno solo, la consulta queda igual que antes.
-        return {**values, "env": shown(env)} if len(cfg.cloudwatch) > 1 else values
+        # `env` siempre, como OpenSearch: el visor lo muestra en cada tarjeta (salvo «default», que no dice nada).
+        return {**values, "env": shown(env)}
 
     def logs_client(env: str) -> tuple[LogsClient, str]:
         """El cliente del proveedor de ese CloudWatch y su nombre (para los mensajes)."""

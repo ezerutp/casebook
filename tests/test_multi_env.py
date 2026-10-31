@@ -261,7 +261,7 @@ def test_a_single_cloudwatch_keeps_working_without_env(path, tmp_path, monkeypat
     mcp_ = build(rec, None, config.load(path))
     call(mcp_, "cw_log_groups", {"purpose": "p"})
     started = next(e for e in store.events(rec.session_id) if e["type"] == "query.started")
-    assert "env" not in started["payload"]["params"]  # con uno solo, la consulta queda como antes
+    assert started["payload"]["params"]["env"] == "default"  # siempre, como OpenSearch; el visor no lo muestra
     tools = {t.name: t for t in anyio.run(mcp_.list_tools)}
     assert "env:" not in tools["cw_query"].description
     store.close()
@@ -277,3 +277,19 @@ def test_slack_analysis_is_told_about_the_envs(path):
     prompt = slack_watch.analysis_prompt(job, "C1", 7, environments=envs)
     assert "Hay varios entornos (OpenSearch: prod, prod-archive; MySQL: prod, qa): pasa `env`" in prompt
     assert "varios entornos" not in slack_watch.analysis_prompt(job, "C1", 7)
+
+
+def test_a_single_base_still_says_its_env(path, tmp_path, monkeypatch):
+    monkeypatch.setattr(mysql.MySQLClient, "query", lambda self, sql, kind, allow_expensive=False:
+                        {"columns": ["Tables"], "rows": [["lead"]], "plan": None})
+    store = Store(tmp_path / "t.db")
+    rec = Recorder(store)
+    rec.start_session("SUP-1")
+    mcp_ = build(rec, None, config.load(path))  # solo el pack: una base, con environment = "prod"
+    call(mcp_, "db_tables", {"purpose": "p", "pattern": "lead%"})  # sin env: es la única
+    events = store.events(rec.session_id)
+    started = next(e for e in events if e["type"] == "query.started")
+    finished = next(e for e in events if e["type"] == "query.finished")
+    # Como en OpenSearch: el visor muestra PROD aunque sea la única base.
+    assert started["payload"]["params"]["env"] == "prod" and finished["payload"]["meta"]["env"] == "prod"
+    store.close()

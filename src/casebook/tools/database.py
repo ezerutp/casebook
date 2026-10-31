@@ -80,12 +80,11 @@ def register(mcp: MCPServer, recorder: Recorder, cfg: Config, viewer_url: str | 
         return f"{src.environment or src.host}/{src.database}"
 
     def params(env: str, **values: Any) -> dict[str, Any]:
-        # `env` solo cuando hay varias bases: con una sola, la consulta queda igual que antes.
-        return {**values, **({"env": shown(env)} if len(cfg.mysql) > 1 else {}), "environment": environment(env)}
+        # `env` siempre, como OpenSearch: el visor lo muestra en cada tarjeta (salvo «default», que no dice nada).
+        return {**values, "env": shown(env), "environment": environment(env)}
 
     def meta(env: str, **values: Any) -> dict[str, Any]:
-        # El visor muestra meta.env en la tarjeta de la consulta: con varias bases, se ve contra cuál corrió.
-        return {**values, **({"env": shown(env)} if len(cfg.mysql) > 1 else {})}
+        return {**values, "env": shown(env)}
 
     async def run(env: str, sql: str, kind: str, allow_expensive: bool = False) -> dict[str, Any]:
         db = get_client(env)
