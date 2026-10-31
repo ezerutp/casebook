@@ -619,6 +619,17 @@ def env_names(cfg: Config, kind: str) -> dict[str, str]:
     return {env_name(kind, key, src): key for key, src in getattr(cfg, kind).items()}
 
 
+# Los tipos de fuente en los que, con varios entornos, `env` es obligatorio en las tools.
+ENV_REQUIRED = ("cloudwatch", "mysql")
+SOURCE_LABELS = {"opensearch": "OpenSearch", "cloudwatch": "CloudWatch", "mysql": "MySQL"}
+
+
+def ambiguous_envs(cfg: Config) -> dict[str, list[str]]:
+    """{tipo para mostrar: nombres de sus entornos} de los tipos con varios entornos donde hay que elegir con `env`.
+    Lo usan las instrucciones del MCP y el análisis automático de Slack."""
+    return {SOURCE_LABELS[kind]: list(env_names(cfg, kind)) for kind in ENV_REQUIRED if len(getattr(cfg, kind)) > 1}
+
+
 def _where(kind: str, name: str) -> str:
     return f"sources.{kind}" if name == DEFAULT else f"sources.{kind}.{name}"
 

@@ -263,3 +263,15 @@ def test_a_single_cloudwatch_keeps_working_without_env(path, tmp_path, monkeypat
     tools = {t.name: t for t in anyio.run(mcp_.list_tools)}
     assert "env:" not in tools["cw_query"].description
     store.close()
+
+
+def test_slack_analysis_is_told_about_the_envs(path):
+    from casebook import slack_watch
+
+    path.write_text(QA)
+    envs = config.ambiguous_envs(config.load(path))
+    assert envs == {"MySQL": ["prod", "qa"]}
+    job = slack_watch.Job(ts="1.1", thread_ts="1.1", user_id="U1", user_name="ana", preview="hola")
+    prompt = slack_watch.analysis_prompt(job, "C1", 7, environments=envs)
+    assert "Hay varios entornos (MySQL: prod, qa): pasa `env`" in prompt
+    assert "varios entornos" not in slack_watch.analysis_prompt(job, "C1", 7)

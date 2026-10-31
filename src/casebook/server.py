@@ -55,13 +55,8 @@ def instructions(cfg: Config) -> str:
     from . import texts
 
     lines = [texts.render(INSTRUCTIONS, cfg)]
-    labels = {"opensearch": "OpenSearch", "cloudwatch": "CloudWatch", "mysql": "MySQL"}
-    for kind, text in SOURCE_INSTRUCTIONS.items():
-        envs = getattr(cfg, kind)
-        if envs:
-            lines.append(text)
-        if len(envs) > 1 and kind != "opensearch":  # OpenSearch ya tiene un entorno por defecto (el primero)
-            lines.append(MULTI_ENV.format(what=labels[kind], envs=", ".join(config.env_names(cfg, kind))))
+    lines += [text for kind, text in SOURCE_INSTRUCTIONS.items() if getattr(cfg, kind)]
+    lines += [MULTI_ENV.format(what=what, envs=", ".join(names)) for what, names in config.ambiguous_envs(cfg).items()]
     lines.append("Los resultados vienen con secretos y PII redactados.")
     return "\n".join(lines)
 
