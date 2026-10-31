@@ -170,11 +170,13 @@ def create_app(store: Store, cfg: Config | None = None, served_by: str = "viewer
             "readonly": {
                 "db_path": str(cfg.db_path),
                 "mysql": [
-                    {"env": env, "ssh_host": src.ssh_host, "host": src.host, "database": src.database}
+                    {"env": env, "name": config.env_name("mysql", env, src), "ssh_host": src.ssh_host,
+                     "host": src.host, "database": src.database}
                     for env, src in cfg.mysql.items()
                 ],
                 "cloudwatch": [
-                    {"env": env, "provider": src.provider, "profile": src.options.get("profile", "")}
+                    {"env": env, "name": config.env_name("cloudwatch", env, src), "provider": src.provider,
+                     "profile": src.options.get("profile", "")}
                     for env, src in cfg.cloudwatch.items()
                 ],
                 "opensearch": [

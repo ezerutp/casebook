@@ -117,6 +117,8 @@ Con `casebook source add mysql --env qa` (o desde el visor) se agrega sin editar
 - Una fuente escrita como antes, con sus opciones directo en `[sources.mysql]` o `[sources.cloudwatch]`, es el
   entorno `default`: conserva los ids `db` y `cw` y sus credenciales guardadas. Por eso un pack con el formato de
   una sola base sigue igual, y tú le sumas `[sources.mysql.qa]` en tu `config.toml`.
+- Si esa fuente tiene `environment` (por ejemplo `environment = "prod"`), Claude y el visor la ven como `prod`
+  en vez de `default`; `env="default"` sigue funcionando. No puede haber además una `[sources.mysql.prod]`.
 - Con un solo entorno de MySQL o CloudWatch, `env` es opcional. Con más de uno es **obligatorio**: la tool
   responde con los entornos que hay en vez de elegir sola, para no consultar prod creyendo que es qa. En
   OpenSearch, sin `env` se sigue usando el primero.

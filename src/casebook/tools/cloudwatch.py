@@ -9,7 +9,7 @@ from typing import Any
 import anyio
 from mcp.server.mcpserver import MCPServer
 
-from .. import guards, summary, systems, texts, timerange
+from .. import config, guards, summary, systems, texts, timerange
 from ..backends.errors import BackendError
 from ..backends.opensearch import table_from_records
 from ..config import Config
@@ -37,18 +37,21 @@ def register(mcp: MCPServer, recorder: Recorder, cfg: Config, viewer_url: str | 
             result["viewer"] = f"{viewer_url}/#/sessions/{recorder.session_id}"
         return result
 
-    about = {env: "; ".join(p for p in (src.description, f"log groups: {src.hint}" if src.hint else "") if p)
+    about = {config.env_name("cloudwatch", env, src): "; ".join(p for p in (src.description, f"log groups: {src.hint}" if src.hint else "") if p)
              for env, src in cfg.cloudwatch.items()}
     only = next(iter(cfg.cloudwatch.values()), None) if len(cfg.cloudwatch) == 1 else None
     extra = envs_doc("el backend de logs", about) or (f"Log groups: {only.hint}" if only and only.hint else "")
     tool = texts.tool(mcp, cfg, extra)
 
     def pick(env: str | None) -> str:
-        return resolve_env("CloudWatch", list(cfg.cloudwatch), env)
+        return resolve_env("CloudWatch", config.env_names(cfg, "cloudwatch"), env)
+
+    def shown(env: str) -> str:
+        return config.env_name("cloudwatch", env, cfg.cloudwatch[env])
 
     def with_env(env: str, values: dict[str, Any]) -> dict[str, Any]:
         # `env` solo cuando hay varios: con uno solo, la consulta queda igual que antes.
-        return {**values, "env": env} if len(cfg.cloudwatch) > 1 else values
+        return {**values, "env": shown(env)} if len(cfg.cloudwatch) > 1 else values
 
     def logs_client(env: str) -> tuple[LogsClient, str]:
         """El cliente del proveedor de ese CloudWatch y su nombre (para los mensajes)."""
@@ -188,7 +191,7 @@ def register(mcp: MCPServer, recorder: Recorder, cfg: Config, viewer_url: str | 
         out = {
             "status": "COMPLETE",
             "external_id": external_id,
-            **({"env": env} if len(cfg.cloudwatch) > 1 else {}),  # cw_context lo necesita
+            **({"env": shown(env)} if len(cfg.cloudwatch) > 1 else {}),  # cw_context lo necesita
             "records_matched": meta["records_matched"],
             "gb_scanned": round((meta["bytes_scanned"] or 0) / 1e9, 3),
             "cost_usd": meta["cost_usd"],

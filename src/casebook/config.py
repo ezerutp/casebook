@@ -96,6 +96,7 @@ class CloudWatchSource:
     system: str = ""  # id para `login <id>`; vacío = cw (la instancia default) o cw-<nombre>
     label: str = ""  # nombre para mostrar; vacío = CloudWatch <nombre>
     description: str = ""
+    environment: str = ""  # en la instancia default, el nombre del entorno para Claude y el visor (por ejemplo prod)
 
 
 @dataclass
@@ -550,6 +551,11 @@ def load(path: Path | None = None, pack: Path | str | None = _ACTIVE) -> Config:
         _load_sources(cfg, data.get("sources", {}))
     except providers.ProviderError as exc:
         raise SettingError(str(exc)) from None
+    for kind in ("cloudwatch", "mysql"):
+        names = [env_name(kind, key, src) for key, src in getattr(cfg, kind).items()]
+        if len(names) != len(set(names)):
+            raise SettingError(f"sources.{kind}: la fuente default se llama {env_name(kind, DEFAULT, getattr(cfg, kind)[DEFAULT])!r} "
+                               "por su `environment` y ya hay otra con ese nombre; cambia uno de los dos")
     ids = [system_id(kind, name, src.system) for kind in SOURCE_KINDS for name, src in getattr(cfg, kind).items()]
     repeated = sorted({i for i in ids if ids.count(i) > 1})
     if repeated:
@@ -595,6 +601,24 @@ def system_id(kind: str, name: str, explicit: str = "") -> str:
     return prefix if kind != "opensearch" and name == DEFAULT else f"{prefix}-{name}"
 
 
+def _valid_env(name: str) -> bool:
+    return bool(name) and name.replace("-", "").replace("_", "").isalnum() and name != "credentials"
+
+
+def env_name(kind: str, key: str, src: Any) -> str:
+    """El nombre de un entorno para Claude y el visor. La instancia DEFAULT (la del formato de una sola fuente) se
+    llama como su `environment` si tiene uno válido («prod» dice más que «default»); las demás, como su tabla."""
+    environment = getattr(src, "environment", "")
+    if kind != "opensearch" and key == DEFAULT and _valid_env(environment):
+        return environment
+    return key
+
+
+def env_names(cfg: Config, kind: str) -> dict[str, str]:
+    """{nombre para Claude: clave en cfg.<kind>}."""
+    return {env_name(kind, key, src): key for key, src in getattr(cfg, kind).items()}
+
+
 def _where(kind: str, name: str) -> str:
     return f"sources.{kind}" if name == DEFAULT else f"sources.{kind}.{name}"
 
@@ -631,11 +655,11 @@ def _load_sources(cfg: Config, sources: dict[str, Any]) -> None:
         if not values.get("provider"):
             raise SettingError(f"{where}: falta `provider` (por ejemplo \"aws\")")
         provider = str(values["provider"])
-        raw = {k: v for k, v in values.items() if k not in _SOURCE_META}
+        raw = {k: v for k, v in values.items() if k not in (*_SOURCE_META, "environment")}
         opts = _options("logs", provider, raw, where)
         cfg.cloudwatch[env] = CloudWatchSource(provider, raw if opts is None else opts, str(values.get("hint", "")),
                                                str(values.get("system", "")), str(values.get("label", "")),
-                                               str(values.get("description", "")))
+                                               str(values.get("description", "")), str(values.get("environment", "")))
 
     for env, values in _instances(sources, "mysql").items():
         where = _where("mysql", env)

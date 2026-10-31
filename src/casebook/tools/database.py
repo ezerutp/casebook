@@ -8,7 +8,7 @@ from typing import Any
 import anyio
 from mcp.server.mcpserver import MCPServer
 
-from .. import guards, summary, systems, texts
+from .. import config, guards, summary, systems, texts
 from ..backends.errors import BackendError
 from ..backends.mysql import MySQLClient, PlanTooExpensive
 from ..config import Config
@@ -33,7 +33,7 @@ def _about(cfg: Config) -> dict[str, str]:
     out = {}
     for env, src in cfg.mysql.items():
         parts = [f"base {src.database}" if src.database else "", src.description, f"tablas: {src.hint}" if src.hint else ""]
-        out[env] = "; ".join(p for p in parts if p)
+        out[config.env_name("mysql", env, src)] = "; ".join(p for p in parts if p)
     return out
 
 
@@ -42,7 +42,10 @@ def register(mcp: MCPServer, recorder: Recorder, cfg: Config, viewer_url: str | 
     clients: dict[str, tuple[object, MySQLClient]] = {}
 
     def pick(env: str | None) -> str:
-        return resolve_env("MySQL", list(cfg.mysql), env)
+        return resolve_env("MySQL", config.env_names(cfg, "mysql"), env)
+
+    def shown(env: str) -> str:
+        return config.env_name("mysql", env, cfg.mysql[env])
 
     def get_client(env: str) -> MySQLClient:
         src = cfg.mysql[env]
@@ -78,11 +81,11 @@ def register(mcp: MCPServer, recorder: Recorder, cfg: Config, viewer_url: str | 
 
     def params(env: str, **values: Any) -> dict[str, Any]:
         # `env` solo cuando hay varias bases: con una sola, la consulta queda igual que antes.
-        return {**values, **({"env": env} if len(cfg.mysql) > 1 else {}), "environment": environment(env)}
+        return {**values, **({"env": shown(env)} if len(cfg.mysql) > 1 else {}), "environment": environment(env)}
 
     def meta(env: str, **values: Any) -> dict[str, Any]:
         # El visor muestra meta.env en la tarjeta de la consulta: con varias bases, se ve contra cuál corrió.
-        return {**values, **({"env": env} if len(cfg.mysql) > 1 else {})}
+        return {**values, **({"env": shown(env)} if len(cfg.mysql) > 1 else {})}
 
     async def run(env: str, sql: str, kind: str, allow_expensive: bool = False) -> dict[str, Any]:
         db = get_client(env)

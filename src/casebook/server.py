@@ -61,7 +61,7 @@ def instructions(cfg: Config) -> str:
         if envs:
             lines.append(text)
         if len(envs) > 1 and kind != "opensearch":  # OpenSearch ya tiene un entorno por defecto (el primero)
-            lines.append(MULTI_ENV.format(what=labels[kind], envs=", ".join(envs)))
+            lines.append(MULTI_ENV.format(what=labels[kind], envs=", ".join(config.env_names(cfg, kind))))
     lines.append("Los resultados vienen con secretos y PII redactados.")
     return "\n".join(lines)
 

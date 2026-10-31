@@ -53,6 +53,24 @@ def test_flat_and_named_in_the_same_table(path):
     assert systems.provider(cfg, qa).options["region"] == "eu-west-1"  # cada proveedor ve sus opciones
 
 
+def test_default_is_named_after_its_environment(path):
+    path.write_text(QA + '\n[sources.cloudwatch.qa]\nprovider = "aws"\nprofile = "qa"\n')
+    cfg = config.load(path)
+    assert config.env_names(cfg, "mysql") == {"prod": "default", "qa": "qa"}
+    assert config.env_names(cfg, "cloudwatch") == {"default": "default", "qa": "qa"}  # el pack no le da environment
+    assert systems.mysql(cfg, "default").id == "db"  # los ids y el keyring no cambian
+    path.write_text(path.read_text().replace('[sources.cloudwatch.qa]', '[sources.cloudwatch]\nenvironment = "prod"\n\n[sources.cloudwatch.qa]'))
+    cfg = config.load(path)
+    assert config.env_names(cfg, "cloudwatch") == {"prod": "default", "qa": "qa"}
+    assert "environment" not in cfg.cloudwatch["default"].options  # no es una opción del proveedor
+
+
+def test_default_name_cannot_collide_with_another_source(path):
+    path.write_text(QA.replace("[sources.mysql.qa]", "[sources.mysql.prod]"))
+    with pytest.raises(config.SettingError, match="se llama 'prod'.*ya hay otra"):
+        config.load(path)
+
+
 def test_repeated_ids_across_kinds_are_rejected(path):
     path.write_text(QA + 'system = "cw"\n')
     with pytest.raises(config.SettingError, match="ids de sistema repetidos.*cw"):
@@ -94,7 +112,7 @@ def test_doctor_checks_each_base(path, monkeypatch):
 def test_instructions_ask_for_env_with_several_bases(path):
     path.write_text(QA)
     text = server.instructions(config.load(path))
-    assert "varios entornos de MySQL (default, qa)" in text
+    assert "varios entornos de MySQL (prod, qa)" in text  # la del pack se llama por su environment
     assert "varios entornos" not in server.instructions(config.load(path.with_name("otro.toml")))
 
 
@@ -130,27 +148,29 @@ def test_tools_require_env_when_there_are_several_bases(mcp):
     server_, hosts, _, _ = mcp
     with pytest.raises(ToolError, match="varios entornos de MySQL.*indica `env`"):
         anyio.run(lambda: server_.call_tool("db_tables", {"purpose": "p", "pattern": "lead%"}))
-    with pytest.raises(ToolError, match="entorno desconocido 'prod'"):
-        anyio.run(lambda: server_.call_tool("db_tables", {"purpose": "p", "pattern": "lead%", "env": "prod"}))
+    with pytest.raises(ToolError, match="entorno desconocido 'staging'.*opciones: prod, qa"):
+        anyio.run(lambda: server_.call_tool("db_tables", {"purpose": "p", "pattern": "lead%", "env": "staging"}))
     assert hosts == []
 
 
 def test_tools_go_to_the_chosen_base(mcp):
     server_, hosts, store, rec = mcp
     assert call(server_, "db_tables", {"purpose": "p", "pattern": "lead%", "env": "qa"})["tables"] == ["lead"]
-    call(server_, "db_tables", {"purpose": "p", "pattern": "lead%", "env": "default"})
-    assert hosts == ["acme-qa.cluster-ro-xyz.us-east-1.rds.amazonaws.com",
-                     "acme-prod.cluster-ro-abc123.us-east-1.rds.amazonaws.com"]
+    call(server_, "db_tables", {"purpose": "p", "pattern": "lead%", "env": "prod"})
+    call(server_, "db_tables", {"purpose": "p", "pattern": "lead%", "env": "default"})  # la clave también sirve
+    prod = "acme-prod.cluster-ro-abc123.us-east-1.rds.amazonaws.com"
+    assert hosts == ["acme-qa.cluster-ro-xyz.us-east-1.rds.amazonaws.com", prod, prod]
     started = [e["payload"]["params"] for e in store.events(rec.session_id) if e["type"] == "query.started"]
     # El conocimiento guarda los esquemas por base: qa no pisa los de prod.
-    assert [(p["env"], p["environment"]) for p in started] == [("qa", "qa/acme_qa"), ("default", "prod/acme")]
+    assert [(p["env"], p["environment"]) for p in started] == [
+        ("qa", "qa/acme_qa"), ("prod", "prod/acme"), ("prod", "prod/acme")]
     finished = [e["payload"]["meta"] for e in store.events(rec.session_id) if e["type"] == "query.finished"]
-    assert [m["env"] for m in finished] == ["qa", "default"]  # el visor lo muestra en cada tarjeta
+    assert [m["env"] for m in finished] == ["qa", "prod", "prod"]  # el visor lo muestra en cada tarjeta
 
 
 def test_tool_descriptions_list_the_bases(mcp):
     server_ = mcp[0]
     tools = {t.name: t for t in anyio.run(server_.list_tools)}
     description = tools["db_select"].description
-    assert '"default" (base acme)' in description and '"qa" (base acme_qa; tablas: las mismas tablas que prod)' in description
+    assert '"prod" (base acme)' in description and '"qa" (base acme_qa; tablas: las mismas tablas que prod)' in description
     assert "env" in tools["db_select"].input_schema["properties"]

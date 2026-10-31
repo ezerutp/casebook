@@ -535,13 +535,14 @@ const settingsView = (() => {
     );
     const dl = document.createElement("dl");
     dl.className = "ro-list";
-    const named = (base, env) => (env === "default" ? base : `${base} ${env}`);
+    // Con una sola base o un solo CloudWatch no hace falta el nombre del entorno.
+    const named = (base, item, all) => (all.length < 2 && item.env === "default" ? base : `${base} ${item.name || item.env}`);
     const rows = [
       ...ro.mysql.flatMap((d) => [
-        [named("MySQL (reader)", d.env), `${d.host} / ${d.database}`],
-        [named("Túnel de MySQL", d.env), d.ssh_host],
+        [named("MySQL (reader)", d, ro.mysql), `${d.host} / ${d.database}`],
+        [named("Túnel de MySQL", d, ro.mysql), d.ssh_host],
       ]),
-      ...ro.cloudwatch.map((c) => [named("CloudWatch", c.env), c.profile ? `${c.provider} (perfil ${c.profile})` : c.provider]),
+      ...ro.cloudwatch.map((c) => [named("CloudWatch", c, ro.cloudwatch), c.profile ? `${c.provider} (perfil ${c.profile})` : c.provider]),
       ...(ro.cloudwatch.length ? [] : [["CloudWatch", "sin configurar"]]),
       ["Base de sesiones", ro.db_path],
     ];
