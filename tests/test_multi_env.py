@@ -210,3 +210,56 @@ def test_cw_context_follows_the_query_env(cw):
                                                         "ptr": "PTR1", "env": "prod"}))
     with pytest.raises(ToolError, match="varios entornos de CloudWatch"):  # una consulta que este MCP no conoce
         anyio.run(lambda: mcp_.call_tool("cw_context", {"purpose": "p", "external_id": "otra-consulta-1", "ptr": "x"}))
+
+
+def test_cw_tools_require_env_and_go_to_the_chosen_one(cw):
+    mcp_, fake, used = cw
+    query = {"purpose": "p", "log_group": "/ecs/acme-api", "query": "fields @message", "start": "-1h"}
+    for name, args in [("cw_log_groups", {"purpose": "p"}), ("cw_estimate", {**query}), ("cw_query", query)]:
+        args = {k: v for k, v in args.items() if name != "cw_estimate" or k != "query"}
+        with pytest.raises(ToolError, match=r"varios entornos de CloudWatch \(prod, qa\)"):
+            anyio.run(lambda: mcp_.call_tool(name, args))
+    with pytest.raises(ToolError, match="entorno desconocido 'staging'"):
+        anyio.run(lambda: mcp_.call_tool("cw_query", {**query, "env": "staging"}))
+    assert used == [] and fake.calls == []  # nada llegó a un backend
+
+    call(mcp_, "cw_log_groups", {"purpose": "p", "env": "prod"})
+    call(mcp_, "cw_estimate", {"purpose": "p", "log_group": "/ecs/acme-api", "start": "-1h", "env": "qa"})
+    call(mcp_, "cw_query", {**query, "env": "default"})  # la clave también sirve
+    assert used == ["default", "qa", "default"]
+
+
+def test_cw_queries_record_their_env(cw, tmp_path):
+    mcp_, _, _ = cw
+    call(mcp_, "cw_query", {"purpose": "p", "log_group": "/ecs/acme-api", "query": "fields @message",
+                            "start": "-1h", "env": "qa"})
+    store = Store(tmp_path / "t.db")
+    events = store.events()
+    started = next(e for e in events if e["type"] == "query.started")
+    finished = next(e for e in events if e["type"] == "query.finished")
+    assert started["payload"]["params"]["env"] == "qa" and finished["payload"]["meta"]["env"] == "qa"
+    store.close()
+
+
+def test_cw_descriptions_and_instructions_list_the_envs(cw, path):
+    mcp_ = cw[0]
+    tools = {t.name: t for t in anyio.run(mcp_.list_tools)}
+    assert '"prod", "qa" (log groups: /ecs/acme-api-qa)' in tools["cw_query"].description
+    assert "varios entornos de CloudWatch (prod, qa)" in server.instructions(config.load(path))
+
+
+def test_a_single_cloudwatch_keeps_working_without_env(path, tmp_path, monkeypatch):
+    import fake_logs
+
+    fake_logs.install(monkeypatch)
+    path.write_text('[sources.cloudwatch]\nprovider = "fake"\n')
+    store = Store(tmp_path / "t.db")
+    rec = Recorder(store)
+    rec.start_session("SUP-1")
+    mcp_ = build(rec, None, config.load(path))
+    call(mcp_, "cw_log_groups", {"purpose": "p"})
+    started = next(e for e in store.events(rec.session_id) if e["type"] == "query.started")
+    assert "env" not in started["payload"]["params"]  # con uno solo, la consulta queda como antes
+    tools = {t.name: t for t in anyio.run(mcp_.list_tools)}
+    assert "env:" not in tools["cw_query"].description
+    store.close()
