@@ -100,10 +100,13 @@ def test_tools_take_any_configured_env(tools):
         return json.loads((await mcp.call_tool("os_count", {"purpose": "prueba", "index": "a", **args})).content[0].text)
 
     assert anyio.run(go, {"env": "staging"})["count"] == 7
-    anyio.run(go, {})
-    assert calls == ["staging", "prod"]  # sin env, el primero de config.toml
+    anyio.run(go, {"env": "prod"})
+    assert calls == ["staging", "prod"]
     with pytest.raises(ToolError, match="opciones: prod, prod-archive, staging"):
         anyio.run(go, {"env": "nada"})
+    with pytest.raises(ToolError, match=r"varios entornos de OpenSearch \(prod, prod-archive, staging\): indica `env`"):
+        anyio.run(go, {})  # con varios, no se elige el primero
+    assert calls == ["staging", "prod"]
 
 
 def test_tool_description_lists_the_envs(tools):

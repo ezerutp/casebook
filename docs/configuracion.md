@@ -119,9 +119,10 @@ Con `casebook source add mysql --env qa` (o desde el visor) se agrega sin editar
   una sola base sigue igual, y tú le sumas `[sources.mysql.qa]` en tu `config.toml`.
 - Si esa fuente tiene `environment` (por ejemplo `environment = "prod"`), Claude y el visor la ven como `prod`
   en vez de `default`; `env="default"` sigue funcionando. No puede haber además una `[sources.mysql.prod]`.
-- Con un solo entorno de MySQL o CloudWatch, `env` es opcional. Con más de uno es **obligatorio**: la tool
-  responde con los entornos que hay en vez de elegir sola, para no consultar prod creyendo que es qa. En
-  OpenSearch, sin `env` se sigue usando el primero.
+- Con un solo entorno de una fuente, `env` es opcional. Con más de uno es **obligatorio**, también en OpenSearch:
+  la tool responde con los entornos que hay en vez de elegir sola, para no consultar prod creyendo que es qa (o
+  prod creyendo que es el archivo). Si una skill de tu pack llama a `os_*` sin `env` y hay varios entornos,
+  agrégale cuál usar.
 - Las guardas (`[db]`, `[cloudwatch]`, `[opensearch]`) valen para todos los entornos.
 - Un entorno nuevo aparece en las tools al reiniciar Claude Code.
 

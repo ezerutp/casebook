@@ -620,7 +620,7 @@ def env_names(cfg: Config, kind: str) -> dict[str, str]:
 
 
 # Los tipos de fuente en los que, con varios entornos, `env` es obligatorio en las tools.
-ENV_REQUIRED = ("cloudwatch", "mysql")
+ENV_REQUIRED = ("opensearch", "cloudwatch", "mysql")
 SOURCE_LABELS = {"opensearch": "OpenSearch", "cloudwatch": "CloudWatch", "mysql": "MySQL"}
 
 

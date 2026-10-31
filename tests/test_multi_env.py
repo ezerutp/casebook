@@ -113,7 +113,9 @@ def test_instructions_ask_for_env_with_several_bases(path):
     path.write_text(QA)
     text = server.instructions(config.load(path))
     assert "varios entornos de MySQL (prod, qa)" in text  # la del pack se llama por su environment
-    assert "varios entornos" not in server.instructions(config.load(path.with_name("otro.toml")))
+    # Sin el config.toml queda el pack: una base, pero dos OpenSearch (prod y prod-archive).
+    alone = server.instructions(config.load(path.with_name("otro.toml")))
+    assert "varios entornos de MySQL" not in alone and "varios entornos de OpenSearch (prod, prod-archive)" in alone
 
 
 # --- tools ----------------------------------------------------------------------------------------------------
@@ -270,8 +272,8 @@ def test_slack_analysis_is_told_about_the_envs(path):
 
     path.write_text(QA)
     envs = config.ambiguous_envs(config.load(path))
-    assert envs == {"MySQL": ["prod", "qa"]}
+    assert envs == {"OpenSearch": ["prod", "prod-archive"], "MySQL": ["prod", "qa"]}
     job = slack_watch.Job(ts="1.1", thread_ts="1.1", user_id="U1", user_name="ana", preview="hola")
     prompt = slack_watch.analysis_prompt(job, "C1", 7, environments=envs)
-    assert "Hay varios entornos (MySQL: prod, qa): pasa `env`" in prompt
+    assert "Hay varios entornos (OpenSearch: prod, prod-archive; MySQL: prod, qa): pasa `env`" in prompt
     assert "varios entornos" not in slack_watch.analysis_prompt(job, "C1", 7)
