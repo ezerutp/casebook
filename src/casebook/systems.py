@@ -76,6 +76,7 @@ def cloudwatch(cfg: Config, env: str | None = None) -> System:
     env = env or _single(cfg, "cloudwatch")
     src = cfg.cloudwatch[env]
     default = env == config.DEFAULT
+    name = config.env_name("cloudwatch", env, src)
     cls = providers.get("logs", src.provider)
     description = src.description or (f"Log Insights ({cls.label})" if cls else "Log Insights")
     keyring_entry = getattr(cls, "keyring_entry", None) or f"cloudwatch-{src.provider}"
@@ -83,7 +84,8 @@ def cloudwatch(cfg: Config, env: str | None = None) -> System:
         config.system_id("cloudwatch", env, src.system),
         "cloudwatch",
         keyring_entry if default else f"{keyring_entry}-{env}",
-        src.label or ("CloudWatch" if default else f"CloudWatch {env}"),
+        # Con el nombre que ven Claude y el visor: «CloudWatch prod» si la default tiene environment.
+        src.label or ("CloudWatch" if name == config.DEFAULT else f"CloudWatch {name}"),
         description,
         f"cloudwatch ({src.provider})" if default else f"cloudwatch:{env} ({src.provider})",
         env,
@@ -97,11 +99,12 @@ def mysql(cfg: Config, env: str | None = None) -> System:
     env = env or _single(cfg, "mysql")
     src = cfg.mysql[env]
     default = env == config.DEFAULT
+    name = config.env_name("mysql", env, src)
     return System(
         config.system_id("mysql", env, src.system),
         "mysql",
         MYSQL_KEYRING if default else f"mysql-{env}",
-        src.label or ("MySQL réplica" if default else f"MySQL {env}"),
+        src.label or ("MySQL réplica" if name == config.DEFAULT else f"MySQL {name}"),
         src.description or "réplica de solo lectura",
         "mysql (reader)" if default else f"mysql:{env}",
         env,

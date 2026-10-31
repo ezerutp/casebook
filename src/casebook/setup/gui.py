@@ -1342,7 +1342,8 @@ class SessionsPage(Page):
                                  "button": action}
         cfg = config.load()
         for env, src in cfg.mysql.items():
-            title = "MySQL (réplica)" if env == config.DEFAULT else f"MySQL {env}"
+            name = config.env_name("mysql", env, src)
+            title = "MySQL (réplica)" if name == config.DEFAULT else f"MySQL {name}"
             rows.add(Row(p, src.label or title, f"credenciales: {src.credentials.hint}", self.tile("database", p.muted),
                          [self.chip("Automático", "neutral", "lock")]))
         card.box.addWidget(rows)

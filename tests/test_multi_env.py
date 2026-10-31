@@ -36,6 +36,7 @@ def test_pack_base_and_user_qa_live_side_by_side(path):
     assert [s for s in by_id if s.startswith("db")] == ["db", "db-qa"]
     assert by_id["db"].keyring == systems.MYSQL_KEYRING  # la de siempre: no hay que volver a iniciar sesión
     assert by_id["db-qa"].keyring == "mysql-qa" and by_id["db-qa"].label == "MySQL qa"
+    assert by_id["db"].label == "MySQL prod"  # el pack le pone environment = "prod"
     qa = cfg.mysql["qa"]
     assert qa.credentials.kind == "keyring" and "casebook login db-qa" in qa.credentials.hint
     assert cfg.mysql["default"].credentials.kind == "env-file"  # la del pack no cambia
@@ -59,9 +60,11 @@ def test_default_is_named_after_its_environment(path):
     assert config.env_names(cfg, "mysql") == {"prod": "default", "qa": "qa"}
     assert config.env_names(cfg, "cloudwatch") == {"default": "default", "qa": "qa"}  # el pack no le da environment
     assert systems.mysql(cfg, "default").id == "db"  # los ids y el keyring no cambian
+    assert systems.cloudwatch(cfg, "default").label == "CloudWatch"  # sin environment, el nombre de siempre
     path.write_text(path.read_text().replace('[sources.cloudwatch.qa]', '[sources.cloudwatch]\nenvironment = "prod"\n\n[sources.cloudwatch.qa]'))
     cfg = config.load(path)
     assert config.env_names(cfg, "cloudwatch") == {"prod": "default", "qa": "qa"}
+    assert systems.cloudwatch(cfg, "default").label == "CloudWatch prod"
     assert "environment" not in cfg.cloudwatch["default"].options  # no es una opción del proveedor
 
 
