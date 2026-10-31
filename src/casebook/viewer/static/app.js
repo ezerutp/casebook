@@ -1159,6 +1159,14 @@ function queryCard(ev, p) {
     $(".svc-icon", el).title = SERVICES[svc];
   }
   $(".tool", el).textContent = p.tool;
+  const env = p.params?.env;
+  if (env) {
+    const pill = $(".env-pill", el);
+    pill.hidden = false;
+    pill.textContent = env.toUpperCase();
+    pill.dataset.tone = envTone(env);
+    pill.title = `Entorno ${env}`;
+  }
   $(".purpose", el).textContent = p.purpose || "consulta";
   $("time", el).textContent = timeFmt.format(new Date(ev.ts));
   const text = p.query || p.params?.sql || p.params?.query;
@@ -1197,12 +1205,25 @@ function setStatus(el, cls, label) {
   s.textContent = label;
 }
 
+// El color de la etiqueta del entorno (va después del ícono del servicio): prod (y prod-archive, production…) en rojo, para que se note; los nombres
+// conocidos con su color y cualquier otro, siempre el mismo de una paleta fija.
+const ENV_TONES = ["note", "slack", "accent", "ok"];
+function envTone(env) {
+  const name = env.toLowerCase();
+  if (/^(prod|prd|production|live)\b/.test(name)) return "prod";
+  if (/^(qa|test|testing|uat)\b/.test(name)) return "qa";
+  if (/^(staging|stage|stg|preprod|pre)\b/.test(name)) return "staging";
+  if (/^(dev|develop|development|local|lab|sandbox)\b/.test(name)) return "dev";
+  let h = 0;
+  for (const c of name) h = (h * 31 + c.charCodeAt(0)) >>> 0;
+  return ENV_TONES[h % ENV_TONES.length];
+}
+
 function metaText(p) {
   const parts = [`${p.rows} filas`, `${p.duration_ms} ms`];
   if (p.meta?.cost_usd != null) parts.push(`$${Number(p.meta.cost_usd).toFixed(4)}`);
   else if (p.meta?.estimated_cost_usd != null) parts.push(`estimado $${Number(p.meta.estimated_cost_usd).toFixed(4)}`);
   if (p.meta?.total_hits != null) parts.push(`${p.meta.total_hits} hits totales`);
-  if (p.meta?.env) parts.push(p.meta.env);
   if (p.meta?.truncated) parts.push("truncado");
   return parts.join(" · ");
 }
