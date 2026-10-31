@@ -35,7 +35,7 @@ from PySide6.QtWidgets import (
     QWidget,
 )
 
-from .. import config, native_host
+from .. import config, native_host, systems
 from . import steps
 from .icons import app_icon, app_pixmap, line_icon, line_pixmap
 from .theme import DARK, FONTS_DIR, LIGHT, Palette, stylesheet
@@ -1319,34 +1319,12 @@ class SessionsPage(Page):
     def build(self) -> None:
         p = self.palette_
         self.rows: dict[str, dict] = {}
+        # Las filas se arman al entrar al paso, no aquí: todas las páginas se construyen al abrir la ventana, y el
+        # pack se puede instalar o cambiar después, en el paso de configuración (con otros servicios).
+        self.row_list = RowList()
+        self.row_key: tuple | None = None
         card = self.card()
-        rows = RowList()
-        for s in steps.login_systems():
-            system, name, description = s.id, s.label, s.description
-            chip = self.chip("Revisando…")
-            waiting_icon = QLabel()
-            waiting_icon.setFixedSize(16, 16)
-            spinner = Spinner(waiting_icon, p.ink, 16)
-            waiting_text = label("Esperando tu Chrome…", "RowText")
-            waiting = QWidget()
-            waiting.setLayout(hbox(waiting_icon, waiting_text, spacing=8))
-            waiting.hide()
-            action = button("Iniciar sesión", "", "log-in", p, small=True)
-            action.setFixedWidth(150)
-            action.setEnabled(False)
-            action.clicked.connect(lambda _=False, s=system: self._action(s))
-            row = Row(p, name, description, self.tile("activity" if s.kind == "cloudwatch" else "search"),
-                      [chip, waiting, action])
-            rows.add(row)
-            self.rows[system] = {"chip": chip, "waiting": waiting, "spinner": spinner, "waiting_text": waiting_text,
-                                 "button": action}
-        cfg = config.load()
-        for env, src in cfg.mysql.items():
-            name = config.env_name("mysql", env, src)
-            title = "MySQL (réplica)" if name == config.DEFAULT else f"MySQL {name}"
-            rows.add(Row(p, src.label or title, f"credenciales: {src.credentials.hint}", self.tile("database", p.muted),
-                         [self.chip("Automático", "neutral", "lock")]))
-        card.box.addWidget(rows)
+        card.box.addWidget(self.row_list)
         self.body.addWidget(card)
 
         self.detail_toggle = button("Ver detalle", "subtle", "chevron-right", p, small=True)
@@ -1365,8 +1343,47 @@ class SessionsPage(Page):
         self.cancelled = False
 
     def enter(self) -> None:
-        if not self.entered:
+        if self.logging_in:
+            return
+        cfg = config.load()
+        key = (tuple(s.id for s in systems.browser_systems(cfg)), tuple(cfg.mysql))
+        if key != self.row_key:  # primera vez, o el pack cambió desde la última
+            self._build_rows(cfg)
+            self.row_key = key
             self._refresh()
+        elif not self.entered:
+            self._refresh()
+
+    def _build_rows(self, cfg: config.Config) -> None:
+        p = self.palette_
+        for w in self.rows.values():
+            w["spinner"].stop()
+        self.row_list.clear()
+        self.rows = {}
+        for s in systems.browser_systems(cfg):
+            system, name, description = s.id, s.label, s.description
+            chip = self.chip("Revisando…")
+            waiting_icon = QLabel()
+            waiting_icon.setFixedSize(16, 16)
+            spinner = Spinner(waiting_icon, p.ink, 16)
+            waiting_text = label("Esperando tu Chrome…", "RowText")
+            waiting = QWidget()
+            waiting.setLayout(hbox(waiting_icon, waiting_text, spacing=8))
+            waiting.hide()
+            action = button("Iniciar sesión", "", "log-in", p, small=True)
+            action.setFixedWidth(150)
+            action.setEnabled(False)
+            action.clicked.connect(lambda _=False, s=system: self._action(s))
+            row = Row(p, name, description, self.tile("activity" if s.kind == "cloudwatch" else "search"),
+                      [chip, waiting, action])
+            self.row_list.add(row)
+            self.rows[system] = {"chip": chip, "waiting": waiting, "spinner": spinner, "waiting_text": waiting_text,
+                                 "button": action}
+        for env, src in cfg.mysql.items():
+            name = config.env_name("mysql", env, src)
+            title = "MySQL (réplica)" if name == config.DEFAULT else f"MySQL {name}"
+            self.row_list.add(Row(p, src.label or title, f"credenciales: {src.credentials.hint}",
+                                  self.tile("database", p.muted), [self.chip("Automático", "neutral", "lock")]))
 
     def _toggle_detail(self) -> None:
         show = not self.log.isVisible()
@@ -1387,7 +1404,9 @@ class SessionsPage(Page):
         p = self.palette_
         self.status = sessions
         for s in sessions:
-            w = self.rows[s["system"]]
+            w = self.rows.get(s["system"])
+            if w is None:  # una fuente que apareció después de armar las filas: se agrega al volver a entrar
+                continue
             text, tone, icon = {
                 "ok": ("Sesión válida", "ok", "check"),
                 "missing": ("Sin sesión", "neutral", None),
