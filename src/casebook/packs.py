@@ -217,7 +217,8 @@ def _domains(cfg: config.Config) -> list[str]:
 
     out = [e.domain or urlsplit(str(e.options.get("url", ""))).hostname or "" for e in cfg.opensearch.values()]
     # Las URLs de las opciones de CloudWatch (un proveedor con login en el navegador, por ejemplo).
-    out += [urlsplit(v).hostname or "" for v in cfg.cw_options.values() if isinstance(v, str) and v.startswith("https://")]
+    out += [urlsplit(v).hostname or "" for src in cfg.cloudwatch.values() for v in src.options.values()
+            if isinstance(v, str) and v.startswith("https://")]
     return sorted({d for d in out if d})
 
 

@@ -2,8 +2,8 @@
 
 - Cookies del navegador (las fuentes con login en el navegador): en el keyring del sistema (`casebook login`).
 - Usuario y contraseña o API key (OpenSearch directo): en el keyring, como JSON (`casebook login <id>`).
-- MySQL: de la fuente de [sources.mysql.credentials] (un archivo con `export X=...` o variables de entorno). Si
-  ahí no hay, se usa lo guardado con `casebook login db`.
+- MySQL: de las [credentials] de cada base (un archivo con `export X=...` o variables de entorno). Si ahí no hay,
+  se usa lo guardado con `casebook login db` (o `login db-<nombre>`, una entrada del keyring por base).
 """
 
 from __future__ import annotations
@@ -116,13 +116,13 @@ def env_file(source: DbCredentials) -> Path:
     return Path(source.path).expanduser()
 
 
-def describe_source(source: DbCredentials) -> str:
+def describe_source(source: DbCredentials, login: str = "db") -> str:
     """Dónde se buscan las credenciales de la base, para los mensajes (nunca los valores)."""
     if source.kind == "env-file":
         return str(env_file(source))
     if source.kind == "env":
         return f"las variables {source.user_var} y {source.password_var}"
-    return "el keyring (casebook login db)"
+    return f"el keyring (casebook login {login})"
 
 
 def external_db_login(source: DbCredentials | None = None) -> tuple[str, str] | None:
@@ -138,36 +138,41 @@ def external_db_login(source: DbCredentials | None = None) -> tuple[str, str] | 
     return (user, password) if user and password else None
 
 
-def db_login_source(source: DbCredentials | None = None) -> str | None:
+# Cada base guarda lo suyo en su entrada del keyring (System.keyring): la DEFAULT en MYSQL_KEYRING (`login db`),
+# otra en mysql-<nombre> (`login db-<nombre>`).
+
+
+def db_login_source(source: DbCredentials | None = None, entry: str = MYSQL_KEYRING,
+                    login: str = "db") -> str | None:
     """De dónde salen las credenciales de MySQL (para diagnóstico; nunca los valores)."""
     source = source or DbCredentials()
     if external_db_login(source):
-        return describe_source(source)
-    if keyring.get_password(SERVICE, MYSQL_KEYRING):
-        return "keyring (casebook login db)"
+        return describe_source(source, login)
+    if keyring.get_password(SERVICE, entry):
+        return f"keyring (casebook login {login})"
     return None
 
 
-def set_db_login(user: str, password: str) -> None:
+def set_db_login(user: str, password: str, entry: str = MYSQL_KEYRING) -> None:
     if not user or not password:
         raise ValueError("usuario y contraseña son obligatorios")
-    keyring.set_password(SERVICE, MYSQL_KEYRING, json.dumps({"user": user, "password": password}))
+    keyring.set_password(SERVICE, entry, json.dumps({"user": user, "password": password}))
 
 
-def delete_db_login() -> None:
+def delete_db_login(entry: str = MYSQL_KEYRING) -> None:
     try:
-        keyring.delete_password(SERVICE, MYSQL_KEYRING)
+        keyring.delete_password(SERVICE, entry)
     except keyring.errors.PasswordDeleteError:
         pass
 
 
-def get_db_login(source: DbCredentials | None = None) -> tuple[str, str] | None:
+def get_db_login(source: DbCredentials | None = None, entry: str = MYSQL_KEYRING) -> tuple[str, str] | None:
     """Primero las de la fuente configurada (si el equipo cambia la contraseña y la herramienta reescribe el
     archivo, aquí se toma sola); si no hay, las del keyring."""
     found = external_db_login(source)
     if found:
         return found
-    raw = keyring.get_password(SERVICE, MYSQL_KEYRING)
+    raw = keyring.get_password(SERVICE, entry)
     if not raw:
         return None
     data = json.loads(raw)

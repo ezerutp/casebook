@@ -41,7 +41,8 @@ def test_save_writes_only_changes_and_keeps_other_keys(path):
     assert "# comentario" in (path.parent / "config.toml.bak").read_text()
 
     cfg = config.load(path)
-    assert (cfg.cw_max_cost_usd, cfg.db.default_limit, cfg.db.max_limit, cfg.db.ssh_host) == (0.5, 50, 5000, "otro")
+    assert (cfg.cw_max_cost_usd, cfg.db.default_limit, cfg.db.max_limit) == (0.5, 50, 5000)
+    assert cfg.mysql["default"].ssh_host == "otro"
     assert cfg.opensearch["prod"].tunnel_port == 9
 
 

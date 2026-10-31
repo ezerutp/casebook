@@ -463,7 +463,7 @@ const settingsView = (() => {
     const kinds = Object.keys(catalog);
     form.innerHTML = `<label>Tipo <select name="kind">${kinds.map((k) => `<option value="${k}">${esc(catalog[k].label)}</option>`).join("")}</select></label>
       <label>Proveedor <select name="provider"></select></label>
-      <label class="env-row">Entorno <input name="env" placeholder="staging" autocomplete="off"></label>
+      <label class="env-row">Entorno * <input name="env" placeholder="prod, qa, staging…" required autocomplete="off"></label>
       <div class="provider-fields"></div><div class="actions"><button type="submit" class="primary">Guardar</button></div>`;
     const kindSel = $('[name="kind"]', form);
     const provSel = $('[name="provider"]', form);
@@ -496,7 +496,6 @@ const settingsView = (() => {
     const renderProviders = () => {
       const kind = catalog[kindSel.value];
       provSel.innerHTML = kind.providers.map((p) => `<option value="${p.name}">${esc(p.label)} (${p.name})</option>`).join("");
-      $(".env-row", form).hidden = kindSel.value !== "opensearch";
       renderFields();
     };
     const renderFields = () => {
@@ -536,10 +535,14 @@ const settingsView = (() => {
     );
     const dl = document.createElement("dl");
     dl.className = "ro-list";
+    const named = (base, env) => (env === "default" ? base : `${base} ${env}`);
     const rows = [
-      ["MySQL (reader)", `${ro.db.host} / ${ro.db.database}`],
-      ["Túnel de MySQL", ro.db.ssh_host],
-      ["CloudWatch", ro.cloudwatch],
+      ...ro.mysql.flatMap((d) => [
+        [named("MySQL (reader)", d.env), `${d.host} / ${d.database}`],
+        [named("Túnel de MySQL", d.env), d.ssh_host],
+      ]),
+      ...ro.cloudwatch.map((c) => [named("CloudWatch", c.env), c.profile ? `${c.provider} (perfil ${c.profile})` : c.provider]),
+      ...(ro.cloudwatch.length ? [] : [["CloudWatch", "sin configurar"]]),
       ["Base de sesiones", ro.db_path],
     ];
     rows.forEach(([k, v]) => {

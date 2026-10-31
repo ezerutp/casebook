@@ -20,7 +20,7 @@ from typing import Any
 import pymysql
 
 from .. import credentials
-from ..config import Database
+from ..config import Database, MySqlSource
 from .errors import BackendError, SessionExpired
 from .tunnel import SshTunnel
 
@@ -72,25 +72,32 @@ def check_plan(columns: list[str], rows: list[tuple], db: Database) -> None:
 
 
 class MySQLClient:
-    def __init__(self, db: Database):
-        if not db.host:
-            raise BackendError("no hay base configurada ([sources.mysql] en config.toml o en el pack)")
-        if db.reader_host_pattern and db.reader_host_pattern not in db.host:
-            raise BackendError(f"el host {db.host} no es un endpoint reader ({db.reader_host_pattern}); no se conecta")
-        self.db = db
-        self.tunnel = SshTunnel(db.ssh_host, db.host, db.port)
+    """Una base (`source`) con las guardas de [db] (`guards`, compartidas: se leen en cada consulta, así un cambio
+    del visor se aplica sin reconectar). `keyring_entry` y `login` son los de su sistema (`login db-<nombre>`)."""
+
+    def __init__(self, source: MySqlSource, guards: Database | None = None,
+                 keyring_entry: str = credentials.MYSQL_KEYRING, login: str = "db"):
+        if not source.host:
+            raise BackendError("no hay base configurada ([sources.mysql.<nombre>] en config.toml o en el pack)")
+        if source.reader_host_pattern and source.reader_host_pattern not in source.host:
+            raise BackendError(f"el host {source.host} no es un endpoint reader ({source.reader_host_pattern}); "
+                               "no se conecta")
+        self.source = source
+        self.db = guards or Database()
+        self.keyring_entry, self.login = keyring_entry, login
+        self.tunnel = SshTunnel(source.ssh_host, source.host, source.port)
         self._conn: pymysql.connections.Connection | None = None
         self._lock = threading.Lock()  # una consulta a la vez
 
     # --- conexión ---------------------------------------------------------------------------------------------
 
     def _connect(self) -> pymysql.connections.Connection:
-        source = self.db.credentials
-        login = credentials.get_db_login(source)
+        source = self.source.credentials
+        login = credentials.get_db_login(source, self.keyring_entry)
         if not login:
             raise SessionExpired(
-                f"no hay credenciales de la base en {credentials.describe_source(source)}. Pídele al usuario que "
-                f"{source.hint} (o `casebook login db` para guardarlas en el keyring)"
+                f"no hay credenciales de la base en {credentials.describe_source(source, self.login)}. Pídele al "
+                f"usuario que {source.hint} (o `casebook login {self.login}` para guardarlas en el keyring)"
             )
         user, password = login
         port = self.tunnel.ensure()
@@ -100,7 +107,7 @@ class MySQLClient:
                 port=port,
                 user=user,
                 password=password,
-                database=self.db.database,
+                database=self.source.database,
                 charset="utf8mb4",
                 autocommit=True,
                 connect_timeout=10,
@@ -109,7 +116,8 @@ class MySQLClient:
         except pymysql.err.OperationalError as exc:
             if exc.args and exc.args[0] == ER_ACCESS_DENIED:
                 raise SessionExpired(
-                    f"la base rechazó las credenciales de {credentials.db_login_source(source)}. Pídele al usuario "
+                    f"la base rechazó las credenciales de "
+                    f"{credentials.db_login_source(source, self.keyring_entry, self.login)}. Pídele al usuario "
                     f"que las actualice: {source.hint}"
                 ) from exc
             raise BackendError(f"no se pudo conectar a la base: {exc}") from exc

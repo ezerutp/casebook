@@ -43,17 +43,25 @@ SOURCE_INSTRUCTIONS = {
                   "`source` y prefiere os_count o\naggs con size=0 cuando solo interesan cantidades.",
     "cloudwatch": "CloudWatch cuesta por GB escaneado: un log group, la ventana más corta posible, filtra en la consulta "
                   "y usa limit.",
-    "mysql": "MySQL es la réplica de producción: db_describe si falta esquema verificado de la tabla, filtra por "
+    "mysql": "MySQL es una réplica de solo lectura: db_describe si falta esquema verificado de la tabla, filtra por "
              "columnas indexadas y trae\nsolo las columnas necesarias.",
 }
+# Con varias fuentes del mismo tipo (prod y qa, por ejemplo).
+MULTI_ENV = ("Hay varios entornos de {what} ({envs}): pasa `env` en cada llamada, el que corresponde al caso; no "
+             "mezcles resultados de entornos distintos sin decirlo.")
 
 
 def instructions(cfg: Config) -> str:
     from . import texts
 
     lines = [texts.render(INSTRUCTIONS, cfg)]
-    configured = {"opensearch": bool(cfg.opensearch), "cloudwatch": bool(cfg.cw_provider), "mysql": bool(cfg.db.provider)}
-    lines += [text for kind, text in SOURCE_INSTRUCTIONS.items() if configured[kind]]
+    labels = {"opensearch": "OpenSearch", "cloudwatch": "CloudWatch", "mysql": "MySQL"}
+    for kind, text in SOURCE_INSTRUCTIONS.items():
+        envs = getattr(cfg, kind)
+        if envs:
+            lines.append(text)
+        if len(envs) > 1 and kind != "opensearch":  # OpenSearch ya tiene un entorno por defecto (el primero)
+            lines.append(MULTI_ENV.format(what=labels[kind], envs=", ".join(envs)))
     lines.append("Los resultados vienen con secretos y PII redactados.")
     return "\n".join(lines)
 
@@ -238,9 +246,9 @@ def build(recorder: Recorder, viewer_url: str | None, cfg: Config | None = None)
     # reiniciar el servidor MCP.
     if cfg.opensearch:
         opensearch.register(mcp, recorder, cfg, viewer_url)
-    if cfg.cw_provider:
+    if cfg.cloudwatch:
         cloudwatch.register(mcp, recorder, cfg, viewer_url)
-    if cfg.db.provider:
+    if cfg.mysql:
         database.register(mcp, recorder, cfg, viewer_url)
     return mcp
 

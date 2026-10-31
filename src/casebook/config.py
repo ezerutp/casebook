@@ -4,8 +4,10 @@
   Slack, alias y textos del doctor. Tiene el mismo formato que config.toml más una tabla [pack].
 - ~/.config/casebook/config.toml pisa al pack, clave por clave.
 
-Las fuentes van en [sources.opensearch.<env>], [sources.cloudwatch] y [sources.mysql], cada una con su `provider`.
-El formato anterior ([opensearch.envs.<env>], [cloudwatch] con provider, [db] con ssh_host/host…) se sigue leyendo.
+Las fuentes van en [sources.<tipo>.<env>] (opensearch, cloudwatch o mysql), cada una con su `provider`: puede haber
+varias del mismo tipo (prod y qa). Una fuente de CloudWatch o MySQL escrita con sus opciones directo en
+[sources.cloudwatch] o [sources.mysql] es el entorno DEFAULT. El formato anterior ([opensearch.envs.<env>],
+[cloudwatch] con provider, [db] con ssh_host/host…) se sigue leyendo.
 
 Los ajustes que se pueden cambiar desde el visor están en SETTINGS: de ahí salen la carga, la validación, el
 guardado y la API. Cada servidor MCP recarga los archivos cuando cambian (refresh), así que no hace falta
@@ -59,9 +61,16 @@ class DbCredentials:
     fix: str = ""  # el comando que sugieren el doctor y el instalador; vacío = ninguno
 
 
+# El nombre de la instancia que toma una fuente escrita en el formato de una sola ([sources.mysql] o
+# [sources.cloudwatch] con sus opciones directo): conserva los ids `db` y `cw` y sus entradas del keyring.
+DEFAULT = "default"
+
+
 @dataclass
-class Database:
-    provider: str = ""  # vacío = no hay base configurada
+class MySqlSource:
+    """Una base MySQL ([sources.mysql.<nombre>]): a dónde se conecta, con qué credenciales y cómo se muestra."""
+
+    provider: str = "mysql-ssh"
     ssh_host: str = ""
     # Endpoint de solo lectura (reader) de la base. Nunca el writer.
     host: str = ""
@@ -70,6 +79,29 @@ class Database:
     reader_host_pattern: str = ""  # si no está vacío, el host tiene que contenerlo (p. ej. "cluster-ro" en Aurora)
     hint: str = ""  # qué tablas hay, para la descripción de las tools
     environment: str = ""  # cómo se nombra en el conocimiento ("<environment>/<database>"); vacío = el host
+    system: str = ""  # id para `login <id>`; vacío = db (la instancia default) o db-<nombre>
+    label: str = ""  # nombre para mostrar; vacío = MySQL <nombre>
+    description: str = ""  # qué hay en la base, para las tools y el instalador
+    options: dict[str, Any] = field(default_factory=dict)  # las opciones validadas del proveedor (para plugins)
+    credentials: DbCredentials = field(default_factory=DbCredentials)
+
+
+@dataclass
+class CloudWatchSource:
+    """Un backend de Logs Insights ([sources.cloudwatch.<nombre>]): el proveedor y sus opciones."""
+
+    provider: str = ""
+    options: dict[str, Any] = field(default_factory=dict)
+    hint: str = ""  # qué log groups hay, para la descripción de las tools
+    system: str = ""  # id para `login <id>`; vacío = cw (la instancia default) o cw-<nombre>
+    label: str = ""  # nombre para mostrar; vacío = CloudWatch <nombre>
+    description: str = ""
+
+
+@dataclass
+class Database:
+    """Las guardas de MySQL ([db]): valen para todas las bases configuradas."""
+
     max_execution_ms: int = 15_000
     # EXPLAIN previo: se rechaza un full scan (type=ALL) sobre más de estas filas estimadas,
     # o cualquier plan cuyo producto de filas estimadas supere el segundo umbral.
@@ -78,7 +110,6 @@ class Database:
     # LIMIT que se agrega a un SELECT sin LIMIT, y el máximo aceptado.
     default_limit: int = 100
     max_limit: int = 5_000
-    credentials: DbCredentials = field(default_factory=DbCredentials)
 
 
 @dataclass
@@ -128,10 +159,6 @@ class Config:
     viewer_host: str = "127.0.0.1"
     viewer_port: int = 8765
     db_path: Path = field(default_factory=lambda: DATA_DIR / "sessions.db")  # DATA_DIR al crear la config
-    # CloudWatch Logs Insights: el proveedor ("aws" o el de un plugin; vacío = sin CloudWatch) y sus opciones.
-    cw_provider: str = ""
-    cw_options: dict[str, Any] = field(default_factory=dict)
-    cw_hint: str = ""  # qué log groups hay, para la descripción de las tools
     # Cuánto espera una consulta cara a que el ingeniero la apruebe en el visor.
     approval_timeout_s: float = 180
     # Abrir el visor en el navegador en la primera session_start si no hay ninguna pestaña conectada.
@@ -159,8 +186,11 @@ class Config:
     # cómo funciona algo o confirmar un posible bug. Es de cada máquina, así que va en config.toml, no en el pack.
     slack_code_paths: str | None = None
     slack_code: CodeRepo = field(default_factory=CodeRepo)
-    db: Database = field(default_factory=Database)
+    db: Database = field(default_factory=Database)  # las guardas de MySQL
+    # Las fuentes, por nombre de instancia (el `env` de las tools): [sources.<tipo>.<nombre>].
     opensearch: dict[str, OpenSearchEnv] = field(default_factory=dict)
+    mysql: dict[str, MySqlSource] = field(default_factory=dict)
+    cloudwatch: dict[str, CloudWatchSource] = field(default_factory=dict)
     # Doctor: alias de shell que el equipo espera tener y qué decir cuando no se llega al servidor SSH.
     doctor_aliases: list[str] = field(default_factory=list)
     network_hint: str = "revisa tu conexión, la VPN o que tu IP esté permitida en el servidor SSH"
@@ -174,6 +204,23 @@ class Config:
     source: Path | None = field(default=None, repr=False, compare=False)
     loaded_mtime: Any = field(default=None, repr=False, compare=False)  # _signature() al cargar
     pack_arg: Path | str | None = field(default=None, repr=False, compare=False)  # el `pack` de load()
+
+    # Compatibilidad con plugins escritos para una sola fuente de CloudWatch: la primera instancia. Un proveedor
+    # nuevo lee sus opciones de cfg.cloudwatch[self.system.env].
+    def _first_cw(self) -> CloudWatchSource:
+        return next(iter(self.cloudwatch.values()), CloudWatchSource())
+
+    @property
+    def cw_provider(self) -> str:
+        return self._first_cw().provider
+
+    @property
+    def cw_options(self) -> dict[str, Any]:
+        return self._first_cw().options
+
+    @property
+    def cw_hint(self) -> str:
+        return self._first_cw().hint
 
 
 # --- ajustes editables ---------------------------------------------------------------------------------------
@@ -405,22 +452,36 @@ def normalize(data: dict[str, Any]) -> dict[str, Any]:
             data.pop(section)
     if legacy:
         data["sources"] = merge(legacy, data.get("sources", {}))
+    for kind in ("cloudwatch", "mysql"):
+        table = data.get("sources", {}).get(kind)
+        if isinstance(table, dict):
+            data["sources"][kind] = _named(table)
     return data
+
+
+def _named(table: dict[str, Any]) -> dict[str, Any]:
+    """[sources.mysql] o [sources.cloudwatch] por instancia. Las opciones escritas directo en la tabla (el formato
+    de una sola fuente) son la instancia DEFAULT; cada subtabla, salvo `credentials`, es una instancia con nombre."""
+    flat = {k: v for k, v in table.items() if k == "credentials" or not isinstance(v, dict)}
+    out = {k: v for k, v in table.items() if k not in flat}
+    if flat:
+        out[DEFAULT] = merge(out.get(DEFAULT, {}), flat)
+    return out
 
 
 def _layer(base: dict[str, Any], over: dict[str, Any]) -> dict[str, Any]:
     """merge(), salvo que una fuente que cambia de `provider` se reemplaza entera: las opciones del proveedor
     anterior no le sirven al nuevo."""
     out = merge(base, over)
-    for kind, value in over.get("sources", {}).items():
+    for kind, instances in over.get("sources", {}).items():
         previous = base.get("sources", {}).get(kind)
-        if kind == "opensearch" and isinstance(value, dict):
-            for env, src in value.items():
-                old = (previous or {}).get(env)
-                if isinstance(src, dict) and old and src.get("provider", old.get("provider")) != old.get("provider"):
-                    out["sources"]["opensearch"][env] = copy.deepcopy(src)
-        elif isinstance(value, dict) and previous and value.get("provider", previous.get("provider")) != previous.get("provider"):
-            out["sources"][kind] = copy.deepcopy(value)
+        if not isinstance(instances, dict) or not isinstance(previous, dict):
+            continue
+        for name, src in instances.items():
+            old = previous.get(name)
+            if isinstance(src, dict) and isinstance(old, dict) and \
+                    src.get("provider", old.get("provider")) != old.get("provider"):
+                out["sources"][kind][name] = copy.deepcopy(src)
     return out
 
 
@@ -489,9 +550,10 @@ def load(path: Path | None = None, pack: Path | str | None = _ACTIVE) -> Config:
         _load_sources(cfg, data.get("sources", {}))
     except providers.ProviderError as exc:
         raise SettingError(str(exc)) from None
-    ids = [e.system or f"os-{env}" for env, e in cfg.opensearch.items()]
-    if len(ids) != len(set(ids)) or {"cw", "db"} & set(ids):
-        raise SettingError(f"sources.opensearch: ids de sistema repetidos o reservados ({', '.join(ids)})")
+    ids = [system_id(kind, name, src.system) for kind in SOURCE_KINDS for name, src in getattr(cfg, kind).items()]
+    repeated = sorted({i for i in ids if ids.count(i) > 1})
+    if repeated:
+        raise SettingError(f"sources: ids de sistema repetidos ({', '.join(repeated)}); cambia `system` o el nombre")
     _check_consistency(cfg)
     return cfg
 
@@ -520,8 +582,32 @@ def _options(kind: str, name: str, values: dict[str, Any], where: str) -> dict[s
     return providers.validate(cls, values, where)
 
 
+# El prefijo del id de sistema de cada tipo de fuente (`login <id>`, `source test <id>`).
+ID_PREFIX = {"opensearch": "os", "cloudwatch": "cw", "mysql": "db"}
+
+
+def system_id(kind: str, name: str, explicit: str = "") -> str:
+    """El id de una fuente: el `system` que fija la config o, si no, <prefijo>-<nombre>. La instancia DEFAULT de
+    CloudWatch y MySQL (la del formato de una sola fuente) conserva `cw` y `db`."""
+    if explicit:
+        return explicit
+    prefix = ID_PREFIX[kind]
+    return prefix if kind != "opensearch" and name == DEFAULT else f"{prefix}-{name}"
+
+
+def _where(kind: str, name: str) -> str:
+    return f"sources.{kind}" if name == DEFAULT else f"sources.{kind}.{name}"
+
+
+def _instances(sources: dict[str, Any], kind: str) -> dict[str, dict[str, Any]]:
+    table = sources.get(kind, {})
+    if not isinstance(table, dict) or not all(isinstance(v, dict) for v in table.values()):
+        raise SettingError(f"sources.{kind}: cada fuente va en su tabla, [sources.{kind}.<nombre>]")
+    return table
+
+
 def _load_sources(cfg: Config, sources: dict[str, Any]) -> None:
-    for env, values in sources.get("opensearch", {}).items():
+    for env, values in _instances(sources, "opensearch").items():
         name = str(values.get("provider", "dashboards-proxy"))
         raw = {k: v for k, v in values.items() if k not in _SOURCE_META}
         opts = _options("opensearch", name, raw, f"sources.opensearch.{env}")
@@ -540,41 +626,48 @@ def _load_sources(cfg: Config, sources: dict[str, Any]) -> None:
             str(values.get("hint", "")),
         )
 
-    cw = sources.get("cloudwatch")
-    if cw:
-        if not cw.get("provider"):
-            raise SettingError("sources.cloudwatch: falta `provider` (por ejemplo \"aws\")")
-        cfg.cw_provider = str(cw["provider"])
-        cfg.cw_hint = str(cw.get("hint", ""))
-        raw = {k: v for k, v in cw.items() if k not in ("provider", "hint")}
-        opts = _options("logs", cfg.cw_provider, raw, "sources.cloudwatch")
-        cfg.cw_options = raw if opts is None else opts
+    for env, values in _instances(sources, "cloudwatch").items():
+        where = _where("cloudwatch", env)
+        if not values.get("provider"):
+            raise SettingError(f"{where}: falta `provider` (por ejemplo \"aws\")")
+        provider = str(values["provider"])
+        raw = {k: v for k, v in values.items() if k not in _SOURCE_META}
+        opts = _options("logs", provider, raw, where)
+        cfg.cloudwatch[env] = CloudWatchSource(provider, raw if opts is None else opts, str(values.get("hint", "")),
+                                               str(values.get("system", "")), str(values.get("label", "")),
+                                               str(values.get("description", "")))
 
-    db = sources.get("mysql")
-    if db:
-        cfg.db.provider = str(db.get("provider", "mysql-ssh"))
-        cfg.db.hint = str(db.get("hint", ""))
-        cfg.db.environment = str(db.get("environment", ""))
-        cls = providers.get("sql", cfg.db.provider)
+    for env, values in _instances(sources, "mysql").items():
+        where = _where("mysql", env)
+        src = MySqlSource(provider=str(values.get("provider", "mysql-ssh")), hint=str(values.get("hint", "")),
+                          environment=str(values.get("environment", "")), system=str(values.get("system", "")),
+                          label=str(values.get("label", "")), description=str(values.get("description", "")))
+        cls = providers.get("sql", src.provider)
         if cls is not None:
-            raw = {k: v for k, v in db.items() if k not in ("provider", "credentials", "hint", "environment")}
-            for key, value in providers.validate(cls, raw, "sources.mysql").items():
-                if value is not None:
-                    setattr(cfg.db, key, value)
-        creds = db.get("credentials", {})
-        if creds:
-            known = {f.name for f in fields(DbCredentials)}
-            unknown = sorted(set(creds) - known)
-            if unknown:
-                raise SettingError(f"sources.mysql.credentials: opción desconocida: {', '.join(unknown)}")
-            merged = DbCredentials(**{**vars(DbCredentials()), **{k: str(v) for k, v in creds.items()}})
-            if merged.kind not in ("env-file", "env", "keyring"):
-                raise SettingError("sources.mysql.credentials.kind tiene que ser env-file, env o keyring")
-            if merged.kind == "env-file" and not merged.path:
-                raise SettingError("sources.mysql.credentials: con kind = \"env-file\" falta `path`")
-            if merged.kind != "keyring" and not (merged.user_var and merged.password_var):
-                raise SettingError("sources.mysql.credentials: faltan `user_var` y `password_var`")
-            cfg.db.credentials = merged
+            raw = {k: v for k, v in values.items() if k not in (*_SOURCE_META, "credentials", "environment")}
+            src.options = providers.validate(cls, raw, where)
+            for key, value in src.options.items():
+                if value is not None and key in _MYSQL_FIELDS:
+                    setattr(src, key, value)
+        creds = values.get("credentials", {})
+        login = system_id("mysql", env, src.system)
+        known = {f.name for f in fields(DbCredentials)}
+        unknown = sorted(set(creds) - known)
+        if unknown:
+            raise SettingError(f"{where}.credentials: opción desconocida: {', '.join(unknown)}")
+        merged = DbCredentials(**{**vars(DbCredentials()), "hint": f"guárdalas con `casebook login {login}`",
+                                  **{k: str(v) for k, v in creds.items()}})
+        if merged.kind not in ("env-file", "env", "keyring"):
+            raise SettingError(f"{where}.credentials.kind tiene que ser env-file, env o keyring")
+        if merged.kind == "env-file" and not merged.path:
+            raise SettingError(f"{where}.credentials: con kind = \"env-file\" falta `path`")
+        if merged.kind != "keyring" and not (merged.user_var and merged.password_var):
+            raise SettingError(f"{where}.credentials: faltan `user_var` y `password_var`")
+        src.credentials = merged
+        cfg.mysql[env] = src
+
+
+_MYSQL_FIELDS = {f.name for f in fields(MySqlSource)} - {"options", "credentials"}
 
 
 # Lo que no cambia en caliente: el visor ya escucha en un host y puerto, y la base de sesiones está abierta.
@@ -601,9 +694,15 @@ def refresh(cfg: Config) -> bool:
         if f.name == "db":
             for g in fields(Database):
                 setattr(cfg.db, g.name, getattr(fresh.db, g.name))
-        elif f.name == "opensearch":
-            cfg.opensearch.clear()
-            cfg.opensearch.update(fresh.opensearch)
+        elif f.name in SOURCE_KINDS:
+            # En el lugar: las tools guardan una referencia al diccionario. Una fuente que cambió es otro objeto, y
+            # así las tools saben que tienen que rehacer su cliente.
+            current, new = getattr(cfg, f.name), getattr(fresh, f.name)
+            for env in [e for e in current if e not in new]:
+                del current[env]
+            for env, src in new.items():
+                if current.get(env) != src:
+                    current[env] = src
         else:
             setattr(cfg, f.name, getattr(fresh, f.name))
     cfg.loaded_mtime = fresh.loaded_mtime
@@ -677,19 +776,15 @@ def _write_user(data: dict[str, Any], path: Path) -> None:
 SOURCE_KINDS = ("opensearch", "cloudwatch", "mysql")
 
 
-def set_source(kind: str, env: str | None, values: dict[str, Any], path: Path | None = None,
+def set_source(kind: str, env: str, values: dict[str, Any], path: Path | None = None,
                pack: Path | str | None = _ACTIVE) -> None:
-    """Agrega o reemplaza una fuente en config.toml ([sources.opensearch.<env>], [sources.cloudwatch] o
-    [sources.mysql]). Se valida cargando la config resultante antes de escribir."""
+    """Agrega o reemplaza una fuente en config.toml ([sources.<tipo>.<env>]). Se valida cargando la config
+    resultante antes de escribir."""
     path = path or CONFIG_PATH
-    if kind not in SOURCE_KINDS or (kind == "opensearch") != bool(env):
-        raise SettingError("fuente inválida: opensearch lleva un entorno; cloudwatch y mysql, no")
+    if kind not in SOURCE_KINDS or not env:
+        raise SettingError(f"fuente inválida: el tipo es uno de {', '.join(SOURCE_KINDS)} y lleva un nombre")
     data = normalize(_read(path))
-    sources = data.setdefault("sources", {})
-    if kind == "opensearch":
-        sources.setdefault("opensearch", {})[env] = values
-    else:
-        sources[kind] = values
+    data.setdefault("sources", {}).setdefault(kind, {})[env] = values
     path.parent.mkdir(parents=True, exist_ok=True)  # la primera fuente de una instalación nueva
     probe = path.with_name(path.name + ".probe")
     probe.write_text(dumps(data))
@@ -700,17 +795,17 @@ def set_source(kind: str, env: str | None, values: dict[str, Any], path: Path | 
     _write_user(data, path)
 
 
-def remove_source(kind: str, env: str | None, path: Path | None = None) -> bool:
+def remove_source(kind: str, env: str, path: Path | None = None) -> bool:
     """Quita una fuente de config.toml. Devuelve False si ahí no estaba (por ejemplo, porque es del pack)."""
     path = path or CONFIG_PATH
     data = normalize(_read(path))
     sources = data.get("sources", {})
-    container, key = (sources.get("opensearch", {}), env) if kind == "opensearch" else (sources, kind)
-    if key not in container:
+    container = sources.get(kind, {})
+    if env not in container:
         return False
-    del container[key]
-    if kind == "opensearch" and not container:
-        sources.pop("opensearch", None)
+    del container[env]
+    if not container:
+        sources.pop(kind, None)
     if not sources:
         data.pop("sources", None)
     _write_user(data, path)

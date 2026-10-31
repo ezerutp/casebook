@@ -3,7 +3,7 @@
 Las plantillas usan ${nombre} (string.Template), así las llaves de los ejemplos JSON de los docstrings no molestan:
 - ${domain}: de qué son los casos, por ejemplo "casos de soporte" ([texts] domain);
 - ${card} y ${card2}: dos ejemplos de card ([card] examples);
-- ${database}: el nombre de la base.
+- ${database}: el nombre de la base entre backticks (con varias bases, «de `env`»).
 """
 
 from __future__ import annotations
@@ -19,8 +19,15 @@ def values(cfg: Config) -> dict[str, str]:
         "domain": cfg.texts_domain,
         "card": cfg.card_examples[0],
         "card2": cfg.card_examples[1],
-        "database": cfg.db.database or "la base",
+        "database": _database(cfg),
     }
+
+
+def _database(cfg: Config) -> str:
+    names = {src.database for src in cfg.mysql.values() if src.database}
+    if len(cfg.mysql) > 1:
+        return "de `env`"
+    return f"`{names.pop()}`" if names else "configurada"
 
 
 def render(text: str, cfg: Config) -> str:

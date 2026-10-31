@@ -96,22 +96,34 @@ def build_values(kind: str, provider: str, raw: dict[str, Any]) -> dict[str, Any
     return values
 
 
+def check_env(env: str | None) -> str:
+    if not (env and env.replace("-", "").replace("_", "").isalnum()) or env == "credentials":
+        raise config.SettingError("el entorno tiene que ser letras, números, - o _ (por ejemplo prod, qa o staging)")
+    return env
+
+
 def add(kind: str, env: str | None, provider: str, raw: dict[str, Any], path: Path | None = None,
         pack: Any = config._ACTIVE) -> systems.System:
-    if kind == "opensearch" and not (env and env.replace("-", "").replace("_", "").isalnum()):
-        raise config.SettingError("el entorno tiene que ser letras, números, - o _ (por ejemplo staging)")
+    """Agrega una fuente [sources.<kind>.<env>] a config.toml. Con el mismo tipo y nombre, la reemplaza."""
+    if kind not in PROVIDER_KIND:
+        raise config.SettingError(f"tipo desconocido {kind!r}; opciones: {', '.join(PROVIDER_KIND)}")
+    env = check_env(env)
     values = build_values(kind, provider, raw)
     path = path or config.CONFIG_PATH
-    config.set_source(kind, env if kind == "opensearch" else None, values, path, pack)
+    config.set_source(kind, env, values, path, pack)
     cfg = config.load(path, pack)
-    return systems.opensearch(cfg, env) if kind == "opensearch" else (
-        systems.cloudwatch(cfg) if kind == "cloudwatch" else systems.mysql(cfg))
+    return {"opensearch": systems.opensearch, "cloudwatch": systems.cloudwatch, "mysql": systems.mysql}[kind](cfg, env)
 
 
-def locate(cfg: Config, system_id: str) -> tuple[str, str | None]:
+def taken_envs(cfg: Config, kind: str) -> list[str]:
+    """Los entornos que ya tiene un tipo de fuente (para avisar antes de pisar uno)."""
+    return list(getattr(cfg, kind, {}))
+
+
+def locate(cfg: Config, system_id: str) -> tuple[str, str]:
     """(tipo, entorno) de un sistema configurado."""
     system = systems.get(cfg, system_id)
-    return {"opensearch": "opensearch", "cloudwatch": "cloudwatch", "mysql": "mysql"}[system.kind], system.env
+    return system.kind, system.env
 
 
 def origin(cfg: Config, system: systems.System) -> str:
@@ -121,7 +133,7 @@ def origin(cfg: Config, system: systems.System) -> str:
     pack_data = config.normalize(config._read(cfg.pack.path)).get("sources", {}) if cfg.pack else {}
 
     def has(data: dict[str, Any]) -> bool:
-        return system.env in data.get("opensearch", {}) if system.kind == "opensearch" else system.kind in data
+        return system.env in data.get(system.kind, {})
 
     found = [name for name, data in (("pack", pack_data), ("config", user)) if has(data)]
     return "+".join(found) or "config"

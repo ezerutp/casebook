@@ -1341,8 +1341,9 @@ class SessionsPage(Page):
             self.rows[system] = {"chip": chip, "waiting": waiting, "spinner": spinner, "waiting_text": waiting_text,
                                  "button": action}
         cfg = config.load()
-        if cfg.db.provider:
-            rows.add(Row(p, "MySQL (réplica)", f"credenciales: {cfg.db.credentials.hint}", self.tile("database", p.muted),
+        for env, src in cfg.mysql.items():
+            title = "MySQL (réplica)" if env == config.DEFAULT else f"MySQL {env}"
+            rows.add(Row(p, src.label or title, f"credenciales: {src.credentials.hint}", self.tile("database", p.muted),
                          [self.chip("Automático", "neutral", "lock")]))
         card.box.addWidget(rows)
         self.body.addWidget(card)
