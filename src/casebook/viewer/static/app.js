@@ -449,6 +449,10 @@ function linkQueryIds(el, text) {
     pill.innerHTML = `<span class="svc-icon" aria-hidden="true">${ICONS[card.svc] || ""}</span><span class="ref-tool"></span><span class="ref-id"></span>`;
     $(".ref-tool", pill).textContent = $(".tool", card.el).textContent;
     $(".ref-id", pill).textContent = id.slice(0, 7);
+    // La etiqueta del entorno de la tarjeta (PROD, QA…): una nota que compara entornos tiene que decir de cuál es
+    // cada dato.
+    const env = $(".env-pill", card.el);
+    if (env && !env.hidden) $(".svc-icon", pill).after(env.cloneNode(true));
     pill.addEventListener("click", () => openCardModal(id));
     parts.push(text.slice(last, m.index), pill);
     last = m.index + m[0].length;

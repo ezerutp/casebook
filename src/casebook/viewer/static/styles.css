@@ -445,6 +445,7 @@ main { min-width: 0; padding-bottom: 60px; overflow-wrap: anywhere; }
 .query-ref.svc-db { --svc: var(--svc-db); }
 .query-ref .svc-icon, .query-ref .svc-icon svg { width: 12px; height: 12px; color: var(--svc); }
 .query-ref .ref-tool { font-weight: 500; }
+.query-ref .env-pill { font-size: 9.5px; line-height: 14px; padding: 0 4px; border-radius: 3px; }
 .query-ref .ref-id { font-family: var(--mono); font-size: 11px; color: var(--muted); }
 
 /* Modal con la tarjeta citada. */
