@@ -464,10 +464,12 @@ def _named(table: dict[str, Any]) -> dict[str, Any]:
     """[sources.mysql] o [sources.cloudwatch] por instancia. Las opciones escritas directo en la tabla (el formato
     de una sola fuente) son la instancia DEFAULT; cada subtabla, salvo `credentials`, es una instancia con nombre."""
     flat = {k: v for k, v in table.items() if k == "credentials" or not isinstance(v, dict)}
-    out = {k: v for k, v in table.items() if k not in flat}
-    if flat:
-        out[DEFAULT] = merge(out.get(DEFAULT, {}), flat)
-    return out
+    named = {k: v for k, v in table.items() if k not in flat}
+    if not flat:
+        return named
+    # La default primero: es la que ya existía (prod) y así va primera en las tools, el visor y el doctor.
+    default = merge(named.pop(DEFAULT, {}), flat)
+    return {DEFAULT: default, **named}
 
 
 def _layer(base: dict[str, Any], over: dict[str, Any]) -> dict[str, Any]:

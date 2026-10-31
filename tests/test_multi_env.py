@@ -296,3 +296,12 @@ def test_a_single_base_still_says_its_env(path, tmp_path, monkeypatch):
     # Como en OpenSearch: el visor muestra PROD aunque sea la única base.
     assert started["payload"]["params"]["env"] == "prod" and finished["payload"]["meta"]["env"] == "prod"
     store.close()
+
+
+def test_the_default_goes_first_even_in_the_same_table(path):
+    path.write_text('[sources.mysql.qa]\nprovider = "mysql-ssh"\nssh_host = "b"\nhost = "qa"\ndatabase = "d"\n\n'
+                    '[sources.mysql.zz]\nprovider = "mysql-ssh"\nssh_host = "b"\nhost = "zz"\ndatabase = "d"\n')
+    cfg = config.load(path, None)
+    assert list(cfg.mysql) == ["qa", "zz"]  # sin default, el orden del archivo
+    data = config.normalize({"sources": {"mysql": {"qa": {"host": "qa"}, "provider": "mysql-ssh", "host": "prod"}}})
+    assert list(data["sources"]["mysql"]) == ["default", "qa"]  # la default (prod) primero, aunque esté después
