@@ -690,6 +690,7 @@ def set_source(kind: str, env: str | None, values: dict[str, Any], path: Path | 
         sources.setdefault("opensearch", {})[env] = values
     else:
         sources[kind] = values
+    path.parent.mkdir(parents=True, exist_ok=True)  # la primera fuente de una instalación nueva
     probe = path.with_name(path.name + ".probe")
     probe.write_text(dumps(data))
     try:
