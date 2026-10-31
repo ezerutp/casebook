@@ -49,6 +49,10 @@ def register(mcp: MCPServer, recorder: Recorder, cfg: Config, viewer_url: str | 
     def shown(env: str) -> str:
         return config.env_name("cloudwatch", env, cfg.cloudwatch[env])
 
+    # De qué entorno salió cada consulta (external_id -> clave), para que cw_context vaya al mismo backend sin que
+    # Claude tenga que repetir el `env`. Vive lo que vive el servidor MCP; después, con varios entornos, se pide.
+    origins: dict[str, str] = {}
+
     def with_env(env: str, values: dict[str, Any]) -> dict[str, Any]:
         # `env` solo cuando hay varios: con uno solo, la consulta queda igual que antes.
         return {**values, "env": shown(env)} if len(cfg.cloudwatch) > 1 else values
@@ -167,6 +171,7 @@ def register(mcp: MCPServer, recorder: Recorder, cfg: Config, viewer_url: str | 
             if q.cancel_requested():
                 raise BackendError("consulta cancelada desde el visor antes de empezar")
             external_id = await client.start_query([log_group], query, start_iso, end_iso)
+            origins[external_id] = env
 
             result = await _poll(client, external_id, q)
 
@@ -191,7 +196,7 @@ def register(mcp: MCPServer, recorder: Recorder, cfg: Config, viewer_url: str | 
         out = {
             "status": "COMPLETE",
             "external_id": external_id,
-            **({"env": shown(env)} if len(cfg.cloudwatch) > 1 else {}),  # cw_context lo necesita
+            **({"env": shown(env)} if len(cfg.cloudwatch) > 1 else {}),
             "records_matched": meta["records_matched"],
             "gb_scanned": round((meta["bytes_scanned"] or 0) / 1e9, 3),
             "cost_usd": meta["cost_usd"],
@@ -225,13 +230,17 @@ def register(mcp: MCPServer, recorder: Recorder, cfg: Config, viewer_url: str | 
     @expected_errors(recorder, cfg)
     async def cw_context(external_id: str, ptr: str, events: int = 20, env: str | None = None) -> str:
         """Trae las líneas de log alrededor de un resultado de cw_query (las de antes y después en el mismo
-        stream). `external_id` (y `env`, si hay varios) vienen en la respuesta de cw_query y `ptr` es el @ptr de
-        la fila."""
+        stream). `external_id` viene en la respuesta de cw_query y `ptr` es el @ptr de la fila. `env` no hace
+        falta: se usa el entorno de esa consulta."""
         if not _EXTERNAL_ID.match(external_id):
             raise guards.GuardError("external_id inválido")
         if not 1 <= events <= 200:
             raise guards.GuardError("events tiene que estar entre 1 y 200")
-        env = pick(env)
+        known = origins.get(external_id)
+        if known is not None and env is not None and pick(env) != known:
+            raise guards.GuardError(f"la consulta {external_id} corrió en el entorno {shown(known)!r}, no en "
+                                    f"{env!r}: llama sin `env` o con ese")
+        env = known if known is not None else pick(env)
         client, _ = logs_client(env)
         recorder.ensure_session()
         params = with_env(env, {"external_id": external_id, "events": events})

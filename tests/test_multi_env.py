@@ -174,3 +174,39 @@ def test_tool_descriptions_list_the_bases(mcp):
     description = tools["db_select"].description
     assert '"prod" (base acme)' in description and '"qa" (base acme_qa; tablas: las mismas tablas que prod)' in description
     assert "env" in tools["db_select"].input_schema["properties"]
+
+
+# --- CloudWatch -----------------------------------------------------------------------------------------------
+
+
+@pytest.fixture
+def cw(path, tmp_path, monkeypatch):
+    import fake_logs
+    from casebook.tools import cloudwatch as cw_tools
+
+    monkeypatch.setattr(cw_tools, "POLL_SECONDS", 0)
+    fake = fake_logs.install(monkeypatch)
+    used = []
+    real_client = fake_logs.FakeLogsProvider.client
+    monkeypatch.setattr(fake_logs.FakeLogsProvider, "client", lambda self: used.append(self.system.env) or real_client(self))
+    path.write_text('[sources.cloudwatch]\nprovider = "fake"\nenvironment = "prod"\n\n'
+                    '[sources.cloudwatch.qa]\nprovider = "fake"\nhint = "/ecs/acme-api-qa"\n')
+    store = Store(tmp_path / "t.db")
+    rec = Recorder(store)
+    rec.start_session("SUP-1")
+    yield build(rec, None, config.load(path)), fake, used
+    store.close()
+
+
+def test_cw_context_follows_the_query_env(cw):
+    mcp_, fake, used = cw
+    out = call(mcp_, "cw_query", {"purpose": "p", "log_group": "/ecs/acme-api", "query": "fields @message",
+                                  "start": "-1h", "env": "qa"})
+    assert out["env"] == "qa"
+    call(mcp_, "cw_context", {"purpose": "p", "external_id": out["external_id"], "ptr": "PTR1"})
+    assert used == ["qa", "qa"]  # sin `env`: el de la consulta
+    with pytest.raises(ToolError, match="corrió en el entorno 'qa', no en 'prod'"):
+        anyio.run(lambda: mcp_.call_tool("cw_context", {"purpose": "p", "external_id": out["external_id"],
+                                                        "ptr": "PTR1", "env": "prod"}))
+    with pytest.raises(ToolError, match="varios entornos de CloudWatch"):  # una consulta que este MCP no conoce
+        anyio.run(lambda: mcp_.call_tool("cw_context", {"purpose": "p", "external_id": "otra-consulta-1", "ptr": "x"}))
