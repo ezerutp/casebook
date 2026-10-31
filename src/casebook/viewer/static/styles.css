@@ -581,15 +581,23 @@ main { min-width: 0; padding-bottom: 60px; overflow-wrap: anywhere; }
 .card .env-pill[data-tone="slack"] { --tone: var(--svc-slack); }
 .card .env-pill[data-tone="accent"] { --tone: var(--accent); }
 
+/* El nombre de la tool, como la etiqueta del entorno: fondo sólido del color del servicio (el de la barra de la
+   tarjeta) y monoespaciada, para que se distinga del entorno. Sin servicio conocido, gris. */
 .card .tool {
+  --tone: var(--muted);
   font-family: var(--mono);
   font-size: 11.5px;
-  font-weight: 500;
-  color: var(--muted);
-  border: 1px solid var(--border);
+  font-weight: 600;
+  line-height: 18px;
+  color: var(--panel);
+  background: var(--tone);
   border-radius: 4px;
   padding: 0 6px;
+  white-space: nowrap;
 }
+.card.svc-os .tool { --tone: var(--svc-os); }
+.card.svc-cw .tool { --tone: var(--svc-cw); }
+.card.svc-db .tool { --tone: var(--svc-db); }
 .card .purpose { font-weight: 600; min-width: 0; flex: 1 1 240px; }
 
 .svc-icon { display: inline-flex; width: 18px; height: 18px; flex: none; }
