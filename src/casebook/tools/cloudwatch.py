@@ -9,13 +9,13 @@ from typing import Any
 import anyio
 from mcp.server.mcpserver import MCPServer
 
-from .. import guards, summary, systems, texts, timerange
+from .. import config, guards, summary, systems, texts, timerange
 from ..backends.errors import BackendError
 from ..backends.opensearch import table_from_records
 from ..config import Config
 from ..events import QueryHandle, Recorder
 from ..providers.base import COMPLETE, RUNNING, LogsClient
-from .common import expected_errors
+from .common import envs_doc, expected_errors, resolve_env
 
 # En la prueba real el escaneo superó al estimado en ~45 %: se compara el tope contra el estimado con margen.
 ESTIMATE_MARGIN = 1.5
@@ -37,12 +37,29 @@ def register(mcp: MCPServer, recorder: Recorder, cfg: Config, viewer_url: str | 
             result["viewer"] = f"{viewer_url}/#/sessions/{recorder.session_id}"
         return result
 
-    hint = f"Log groups: {cfg.cw_hint}" if cfg.cw_hint else ""
-    tool = texts.tool(mcp, cfg, hint)
+    about = {config.env_name("cloudwatch", env, src): "; ".join(p for p in (src.description, f"log groups: {src.hint}" if src.hint else "") if p)
+             for env, src in cfg.cloudwatch.items()}
+    only = next(iter(cfg.cloudwatch.values()), None) if len(cfg.cloudwatch) == 1 else None
+    extra = envs_doc("el backend de logs", about) or (f"Log groups: {only.hint}" if only and only.hint else "")
+    tool = texts.tool(mcp, cfg, extra)
 
-    def logs_client() -> tuple[LogsClient, str]:
-        """El cliente del proveedor de CloudWatch y su nombre (para los mensajes)."""
-        system = systems.cloudwatch(cfg)
+    def pick(env: str | None) -> str:
+        return resolve_env("CloudWatch", config.env_names(cfg, "cloudwatch"), env)
+
+    def shown(env: str) -> str:
+        return config.env_name("cloudwatch", env, cfg.cloudwatch[env])
+
+    # De qué entorno salió cada consulta (external_id -> clave), para que cw_context vaya al mismo backend sin que
+    # Claude tenga que repetir el `env`. Vive lo que vive el servidor MCP; después, con varios entornos, se pide.
+    origins: dict[str, str] = {}
+
+    def with_env(env: str, values: dict[str, Any]) -> dict[str, Any]:
+        # `env` siempre, como OpenSearch: el visor lo muestra en cada tarjeta (salvo «default», que no dice nada).
+        return {**values, "env": shown(env)}
+
+    def logs_client(env: str) -> tuple[LogsClient, str]:
+        """El cliente del proveedor de ese CloudWatch y su nombre (para los mensajes)."""
+        system = systems.cloudwatch(cfg, env)
         provider = systems.provider(cfg, system)
         if provider is None:
             raise guards.GuardError(systems.missing_provider_message(system))
@@ -55,32 +72,34 @@ def register(mcp: MCPServer, recorder: Recorder, cfg: Config, viewer_url: str | 
 
     @tool
     @expected_errors(recorder, cfg)
-    async def cw_log_groups(search: str | None = None) -> str:
+    async def cw_log_groups(search: str | None = None, env: str | None = None) -> str:
         """Lista los log groups que se pueden consultar, con su tamaño almacenado. `search` filtra por nombre."""
-        client, _ = logs_client()
+        env = pick(env)
+        client, _ = logs_client(env)
         recorder.ensure_session()
-        with recorder.query("cw_log_groups", {"search": search}, None) as q:
+        with recorder.query("cw_log_groups", with_env(env, {"search": search}), None) as q:
             groups = await client.log_groups(search)
             rows = [[g.name, g.label, g.stored_bytes] for g in groups]
-            q.finish(["name", "label", "storedBytes"], rows)
+            q.finish(["name", "label", "storedBytes"], rows, with_env(env, {}))
         return summary.render(footer({"log_groups": [r[0] for r in rows]}, q))
 
     @tool
     @expected_errors(recorder, cfg)
-    async def cw_estimate(log_group: str, start: str, end: str = "now") -> str:
+    async def cw_estimate(log_group: str, start: str, end: str = "now", env: str | None = None) -> str:
         """Estima cuántos GB escanearía una consulta y cuánto costaría, sin correrla. `start`/`end` en ISO 8601
         (UTC por defecto) o relativos: "-2h", "-3d", "now"."""
         check_log_group(log_group)
         s, e = timerange.window(start, end, cfg.cw_max_window_days)
-        client, _ = logs_client()
+        env = pick(env)
+        client, _ = logs_client(env)
         recorder.ensure_session()
-        params = {"log_group": log_group, "start": timerange.iso(s), "end": timerange.iso(e)}
+        params = with_env(env, {"log_group": log_group, "start": timerange.iso(s), "end": timerange.iso(e)})
         with recorder.query("cw_estimate", params, None) as q:
             est = await client.estimate([log_group], timerange.iso(s), timerange.iso(e))
             q.finish(
                 ["log_group", "bytes", "cost_usd", "within_limit"],
                 [[log_group, est.bytes, est.cost_usd, est.within_limit]],
-                {"estimated_cost_usd": est.cost_usd},
+                with_env(env, {"estimated_cost_usd": est.cost_usd}),
             )
         return summary.render(
             footer(
@@ -103,6 +122,7 @@ def register(mcp: MCPServer, recorder: Recorder, cfg: Config, viewer_url: str | 
         start: str,
         end: str = "now",
         max_cost_usd: float | None = None,
+        env: str | None = None,
     ) -> str:
         """Corre una consulta de Logs Insights sobre UN log group y espera el resultado.
         `query` es la sintaxis de Logs Insights sin SOURCE, por ejemplo:
@@ -122,9 +142,11 @@ def register(mcp: MCPServer, recorder: Recorder, cfg: Config, viewer_url: str | 
             raise guards.GuardError("max_cost_usd tiene que ser mayor a 0")
         s, e = timerange.window(start, end, cfg.cw_max_window_days)
         start_iso, end_iso = timerange.iso(s), timerange.iso(e)
-        client, provider_name = logs_client()
+        env = pick(env)
+        client, provider_name = logs_client(env)
         recorder.ensure_session()
-        params = {"log_group": log_group, "start": start_iso, "end": end_iso, "max_cost_usd": max_cost_usd}
+        params = with_env(env, {"log_group": log_group, "start": start_iso, "end": end_iso,
+                                "max_cost_usd": max_cost_usd})
 
         with recorder.query("cw_query", params, query, cancellable=True) as q:
             est = await client.estimate([log_group], start_iso, end_iso)
@@ -149,6 +171,7 @@ def register(mcp: MCPServer, recorder: Recorder, cfg: Config, viewer_url: str | 
             if q.cancel_requested():
                 raise BackendError("consulta cancelada desde el visor antes de empezar")
             external_id = await client.start_query([log_group], query, start_iso, end_iso)
+            origins[external_id] = env
 
             result = await _poll(client, external_id, q)
 
@@ -163,7 +186,7 @@ def register(mcp: MCPServer, recorder: Recorder, cfg: Config, viewer_url: str | 
                 "estimated_cost_usd": result.estimated_cost_usd if result.estimated_cost_usd is not None else est_cost,
                 "backend_duration_ms": result.duration_ms,
             }
-            q.finish(columns, rows, meta)
+            q.finish(columns, rows, with_env(env, meta))
 
         # @ptr es largo y solo sirve para cw_context: va al final de cada fila.
         if "@ptr" in columns:
@@ -173,6 +196,7 @@ def register(mcp: MCPServer, recorder: Recorder, cfg: Config, viewer_url: str | 
         out = {
             "status": "COMPLETE",
             "external_id": external_id,
+            **({"env": shown(env)} if len(cfg.cloudwatch) > 1 else {}),
             "records_matched": meta["records_matched"],
             "gb_scanned": round((meta["bytes_scanned"] or 0) / 1e9, 3),
             "cost_usd": meta["cost_usd"],
@@ -204,19 +228,25 @@ def register(mcp: MCPServer, recorder: Recorder, cfg: Config, viewer_url: str | 
 
     @tool
     @expected_errors(recorder, cfg)
-    async def cw_context(external_id: str, ptr: str, events: int = 20) -> str:
+    async def cw_context(external_id: str, ptr: str, events: int = 20, env: str | None = None) -> str:
         """Trae las líneas de log alrededor de un resultado de cw_query (las de antes y después en el mismo
-        stream). `external_id` viene en la respuesta de cw_query y `ptr` es el @ptr de la fila."""
+        stream). `external_id` viene en la respuesta de cw_query y `ptr` es el @ptr de la fila. `env` no hace
+        falta: se usa el entorno de esa consulta."""
         if not _EXTERNAL_ID.match(external_id):
             raise guards.GuardError("external_id inválido")
         if not 1 <= events <= 200:
             raise guards.GuardError("events tiene que estar entre 1 y 200")
-        client, _ = logs_client()
+        known = origins.get(external_id)
+        if known is not None and env is not None and pick(env) != known:
+            raise guards.GuardError(f"la consulta {external_id} corrió en el entorno {shown(known)!r}, no en "
+                                    f"{env!r}: llama sin `env` o con ese")
+        env = known if known is not None else pick(env)
+        client, _ = logs_client(env)
         recorder.ensure_session()
-        params = {"external_id": external_id, "events": events}
+        params = with_env(env, {"external_id": external_id, "events": events})
         with recorder.query("cw_context", params, f"surrounding-logs de {external_id}") as q:
             records = recorder.redactor.value(await client.surrounding(external_id, ptr, events))
             columns, rows = table_from_records(records)
-            q.finish(columns, rows, raw=records)
+            q.finish(columns, rows, with_env(env, {}), raw=records)
         return summary.render(footer(summary.table(columns, rows, limit=60), q))
 

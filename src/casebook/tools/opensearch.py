@@ -6,33 +6,30 @@ from typing import Any
 
 from mcp.server.mcpserver import MCPServer
 
-from .. import guards, summary, systems, texts
+from .. import config, guards, summary, systems, texts
 from ..backends.opensearch import aggs_tables, hits_table
 from ..config import Config
 from ..events import QueryHandle, Recorder
-from .common import expected_errors
+from .common import envs_doc as _envs_doc
+from .common import expected_errors, resolve_env as _resolve_env
 
 
 def envs_doc(cfg: Config) -> str:
-    """La lista de entornos para la descripción de cada tool; sale de config.toml."""
-    def one(env: str, t) -> str:
-        about = "; ".join(x for x in (t.description, t.hint) if x)
-        return f'"{env}"' + (f" ({about})" if about else "")
-
-    envs = [one(env, t) for env, t in cfg.opensearch.items()]
-    return f"env: el entorno, uno de {', '.join(envs)}. Sin env se usa el primero." if envs else ""
+    """Los entornos para la descripción de cada tool (salen de config.toml). Con uno solo, `env` es opcional y
+    solo se dice qué hay adentro."""
+    about = {env: "; ".join(x for x in (t.description, t.hint) if x) for env, t in cfg.opensearch.items()}
+    if len(about) == 1:
+        (env, text), = about.items()
+        return f'Entorno "{env}"' + (f": {text}" if text else "") + "."
+    return _envs_doc("el entorno", about)
 
 
 def register(mcp: MCPServer, recorder: Recorder, cfg: Config, viewer_url: str | None) -> None:
     tool = texts.tool(mcp, cfg, envs_doc(cfg))
 
     def resolve_env(env: str | None) -> str:
-        if not cfg.opensearch:
-            raise guards.GuardError("no hay entornos de OpenSearch configurados en config.toml")
-        env = env or next(iter(cfg.opensearch))
-        if env not in cfg.opensearch:
-            raise guards.GuardError(f"entorno desconocido {env!r}; opciones: {', '.join(cfg.opensearch)}")
-        return env
+        # Como MySQL y CloudWatch: con varios entornos (prod y prod-archive, por ejemplo) no se elige el primero.
+        return _resolve_env("OpenSearch", config.env_names(cfg, "opensearch"), env)
 
     def footer(result: dict[str, Any], q: QueryHandle) -> dict[str, Any]:
         result = {"query_id": q.query_id, **result}  # para citar la consulta en las notas

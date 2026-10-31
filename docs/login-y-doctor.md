@@ -70,8 +70,9 @@ Si falta Chrome o falla la conexión, corrige el requisito indicado y vuelve a e
 Playwright se instala siempre, también con `--no-login` y en modo desarrollo.
 OpenSearch prepara su túnel antes de abrir Dashboards.
 
-**MySQL** usa las credenciales de `[sources.mysql.credentials]` (un archivo o variables de entorno); si no hay,
-`casebook login db` las pide y las guarda en el keyring.
+**MySQL** usa las credenciales de cada base (`[sources.mysql.<env>.credentials]`: un archivo o variables de
+entorno); si no hay, `casebook login db` las pide y las guarda en el keyring. Cada base tiene su entrada:
+`casebook login db-qa` para la de qa (los ids salen en `casebook source list`).
 
 Las sesiones vencen (las cookies duran lo que dura tu sesión en el navegador). Te
 enteras al abrir una sesión en Claude, porque la tarjeta "Estado de conexiones" lo marca y Claude te dice qué

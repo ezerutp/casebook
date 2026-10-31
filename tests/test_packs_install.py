@@ -178,7 +178,7 @@ def test_add_test_and_remove_a_source(tmp_path):
 
 def test_overriding_a_pack_source_and_going_back(tmp_path):
     path = tmp_path / "config.toml"
-    sources.add("cloudwatch", None, "aws", {"profile": "soporte", "log_group_prefixes": "/ecs/, /app/"}, path)
+    sources.add("cloudwatch", "default", "aws", {"profile": "soporte", "log_group_prefixes": "/ecs/, /app/"}, path)
     cfg = config.load(path)
     assert cfg.cw_provider == "aws" and cfg.cw_options["log_group_prefixes"] == ["/ecs/", "/app/"]
     assert {s["id"]: s["origin"] for s in sources.listing(cfg)}["cw"] == "pack+config"
@@ -211,10 +211,12 @@ def test_cli_source_add_never_touches_the_real_config(tmp_path, monkeypatch, cap
     monkeypatch.setattr(config, "CONFIG_PATH", path)
     real_load = config.load
     monkeypatch.setattr(cli.config, "load", lambda *a, **k: real_load(path))
-    code = cli.main(["source", "add", "mysql", "--provider", "mysql-ssh", "--set", "ssh_host=bastion",
+    code = cli.main(["source", "add", "mysql", "--env", "qa", "--provider", "mysql-ssh", "--set", "ssh_host=bastion",
                      "--set", "host=replica", "--set", "database=app"])
-    assert code == 0 and 'host = "replica"' in path.read_text()
-    assert cli.main(["source", "list"]) == 0 and "db" in capsys.readouterr().out
+    assert code == 0 and 'host = "replica"' in path.read_text() and "[sources.mysql.qa]" in path.read_text()
+    assert cli.main(["source", "list"]) == 0
+    listed = capsys.readouterr().out
+    assert "db-qa" in listed and "\ndb " in listed  # la del pack sigue, con su id de siempre
     assert cli.main(["source", "remove", "nada"]) == 1
 
 

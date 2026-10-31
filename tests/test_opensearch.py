@@ -143,7 +143,7 @@ def test_os_search_end_to_end(server):
     }
     responses["_search"] = leak
 
-    out = call(mcp, "os_search", {"purpose": "prueba", "index": "leads-*", "query": {"term": {"email": "a@b.com"}}, "size": 5, "source": ["msg", "email"]})
+    out = call(mcp, "os_search", {"purpose": "prueba", "env": "prod", "index": "leads-*", "query": {"term": {"email": "a@b.com"}}, "size": 5, "source": ["msg", "email"]})
 
     assert calls[0]["path"] == "leads-*/_search" and calls[0]["body"]["timeout"] == "30s"
     assert calls[0]["body"]["_source"] == ["msg", "email"]
@@ -163,7 +163,7 @@ def test_os_search_end_to_end(server):
 def test_os_search_aggs_only_uses_first_agg_as_main_table(server):
     mcp, _, _, _, responses = server
     responses["_search"] = {**SEARCH, "hits": {"total": {"value": 6}, "hits": []}}
-    out = call(mcp, "os_search", {"purpose": "prueba", "index": "leads-*", "size": 0, "aggs": {"x": {}}})
+    out = call(mcp, "os_search", {"purpose": "prueba", "env": "prod", "index": "leads-*", "size": 0, "aggs": {"x": {}}})
     assert out["main_table"] == "aggs.por_mes" and out["columns"][0] == "key"
     assert list(out["aggs"]) == ["aggs.suma"]
 
@@ -171,7 +171,7 @@ def test_os_search_aggs_only_uses_first_agg_as_main_table(server):
 def test_os_search_guard_blocks_before_any_request(server):
     mcp, rec, store, calls, _ = server
     with pytest.raises(ToolError, match="no permitido"):
-        anyio.run(lambda: mcp.call_tool("os_search", {"purpose": "prueba", "index": ".security"}))
+        anyio.run(lambda: mcp.call_tool("os_search", {"purpose": "prueba", "env": "prod", "index": ".security"}))
     assert calls == []
 
 
@@ -183,7 +183,7 @@ def test_backend_errors_reach_claude(server, monkeypatch):
 
     monkeypatch.setattr(backend.OpenSearchClient, "request", expired)
     with pytest.raises(ToolError, match="venció"):
-        anyio.run(lambda: mcp.call_tool("os_count", {"purpose": "prueba", "index": "leads-*"}))
+        anyio.run(lambda: mcp.call_tool("os_count", {"purpose": "prueba", "env": "prod", "index": "leads-*"}))
     assert store.events(rec.session_id)[-1]["type"] == "query.failed"
 
 
@@ -194,7 +194,7 @@ def test_os_indices_and_count(server):
     out = call(mcp, "os_indices", {"purpose": "prueba", "pattern": "leads-*", "env": "prod-archive"})
     assert out["rows"] == [["leads-1_v-2", "green", 42, "1gb"]]
     assert calls[0]["env"] == "prod-archive" and calls[0]["path"].startswith("_cat/indices/leads-*?format=json")
-    counted = call(mcp, "os_count", {"purpose": "prueba", "index": "leads-*", "query": {"match_all": {}}})
+    counted = call(mcp, "os_count", {"purpose": "prueba", "env": "prod", "index": "leads-*", "query": {"match_all": {}}})
     # El query_id que ve Claude es el mismo que queda en la sesión, para citarlo en las notas.
     assert counted == {"query_id": store.events(rec.session_id)[-1]["query_id"], "count": 7, "viewer": out["viewer"]}
 
@@ -204,7 +204,7 @@ def test_os_mapping(server):
     responses["_mapping"] = {
         "leads-1_v-2": {"mappings": {"properties": {"email": {"type": "keyword"}, "attr": {"properties": {"source": {"type": "keyword"}}}}}}
     }
-    out = call(mcp, "os_mapping", {"purpose": "prueba", "index": "leads-*"})
+    out = call(mcp, "os_mapping", {"purpose": "prueba", "env": "prod", "index": "leads-*"})
     assert out["fields"] == {"attr.source": "keyword", "email": "keyword"}
 
 
@@ -214,8 +214,8 @@ def test_successful_tools_never_record_failures(server):
     responses["_count"] = {"count": 1}
     responses["_mapping"] = {"a": {"mappings": {"properties": {}}}}
     responses["_search"] = SEARCH
-    for name, args in [("os_indices", {"purpose": "prueba", "pattern": "a*"}), ("os_count", {"purpose": "prueba", "index": "a"}),
-                       ("os_mapping", {"purpose": "prueba", "index": "a"}), ("os_search", {"purpose": "prueba", "index": "a"})]:
+    for name, args in [("os_indices", {"purpose": "prueba", "env": "prod", "pattern": "a*"}), ("os_count", {"purpose": "prueba", "env": "prod", "index": "a"}),
+                       ("os_mapping", {"purpose": "prueba", "env": "prod", "index": "a"}), ("os_search", {"purpose": "prueba", "env": "prod", "index": "a"})]:
         call(mcp, name, args)
     types = [e["type"] for e in store.events(rec.session_id)]
     assert "query.failed" not in types and types.count("query.finished") == 4

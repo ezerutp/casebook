@@ -34,12 +34,12 @@ class Aws(Provider):
     )
 
     def login_hint(self) -> str:
-        profile = self.cfg.cw_options.get("profile")
+        profile = self.options.get("profile")
         flag = f" --profile {profile}" if profile else ""
         return f"la sesión es la de tu perfil de AWS: `aws sso login{flag}` (o `aws configure{flag}`)"
 
     def client(self) -> AwsLogs:
-        return AwsLogs(self.cfg.cw_options, hint=self.login_hint())
+        return AwsLogs(self.options, hint=self.login_hint())
 
     def doctor_checks(self, heal: bool = True):
         from ..doctor import FAIL, OK, Check

@@ -9,7 +9,7 @@ from dataclasses import dataclass
 
 import httpx
 
-from . import credentials, systems
+from . import config, credentials, systems
 from .backends import os_tunnel
 from .config import Config
 
@@ -79,16 +79,18 @@ def check_opensearch(cfg: Config, env: str, heal: bool = True) -> list[Check]:
     return checks
 
 
-def check_db(cfg: Config) -> list[Check]:
+def check_db(cfg: Config, system=None) -> list[Check]:
     from .backends.errors import BackendError
     from .backends.mysql import MySQLClient
 
-    name = systems.mysql(cfg).check
-    source = cfg.db.credentials
-    if not credentials.get_db_login(source):
-        return [Check(name, FAIL, f"sin credenciales en {credentials.describe_source(source)}: {source.hint}")]
+    system = system or systems.mysql(cfg)
+    name = system.check
+    source = cfg.mysql[system.env].credentials
+    if not credentials.get_db_login(source, system.keyring):
+        return [Check(name, FAIL, f"sin credenciales en {credentials.describe_source(source, system.id)}: "
+                      f"{source.hint}")]
     try:
-        client = MySQLClient(cfg.db)
+        client = MySQLClient(cfg.mysql[system.env], cfg.db, system.keyring, system.id)
     except BackendError as exc:
         return [Check(name, FAIL, str(exc))]
     try:
@@ -102,7 +104,7 @@ def check_db(cfg: Config) -> list[Check]:
             name,
             OK,
             f"conectado al reader (MySQL {info['version']}, innodb_read_only={info['innodb_read_only']}) "
-            f"con las credenciales de {credentials.db_login_source(source)}",
+            f"con las credenciales de {credentials.db_login_source(source, system.keyring, system.id)}",
         )
     ]
 
@@ -200,15 +202,20 @@ def check_prereqs(cfg: Config) -> list[Check]:
     hosts = [
         *[(target.ssh_host, f"OpenSearch {env}", target.tunnel_port if target.provider == "dashboards-proxy" else None)
           for env, target in cfg.opensearch.items() if target.ssh_host],
-        *([(cfg.db.ssh_host, "MySQL", None)] if cfg.db.provider and cfg.db.ssh_host else []),
+        *[(src.ssh_host, "MySQL" if env == config.DEFAULT else f"MySQL {env}", None)
+          for env, src in cfg.mysql.items() if src.ssh_host],
     ]
-    if not cfg.opensearch and not cfg.cw_provider and not cfg.db.provider:
+    if not cfg.opensearch and not cfg.cloudwatch and not cfg.mysql:
         where = f"el pack {cfg.pack.name}" if cfg.pack else "ningún pack"
         out.append(Check(name, WARN, f"no hay fuentes configuradas ({where} ni config.toml): instala el pack de tu "
                          "equipo con `casebook pack install <carpeta>` o agrega [sources.*] en config.toml",
                          "Sistema", "sources"))
     servers: dict[tuple[str, int], str] = {}
+    seen: set[tuple[str, int | None]] = set()
     for host, role, forward_port in hosts:
+        if (host, forward_port) in seen:  # dos bases (prod y qa) detrás del mismo bastión: un solo chequeo
+            continue
+        seen.add((host, forward_port))
         conf = ssh_diag.ssh_config(host)
         if not ssh_diag.host_defined(host, conf):
             out.append(Check(name, FAIL, f"falta el host `{host}` en ~/.ssh/config ({role})", "Conexión",
@@ -236,14 +243,18 @@ def check_prereqs(cfg: Config) -> list[Check]:
             out.append(Check(name, FAIL, f"servidor SSH {detail} → tu máquina no llega: {cfg.network_hint}",
                              "Conexión", f"ssh-server:{hostname}"))
 
-    source = cfg.db.credentials
-    if cfg.db.provider and source.kind != "keyring":
+    for env, src in cfg.mysql.items():
+        source = src.credentials
+        if source.kind == "keyring":
+            continue
         where = credentials.describe_source(source)
+        base = "la base" if env == config.DEFAULT else f"la base {env}"
+        key = "db-credentials" if env == config.DEFAULT else f"db-credentials:{env}"
         if credentials.external_db_login(source):
-            out.append(Check(name, OK, f"credenciales de la base en {where}", "Credenciales", "db-credentials"))
+            out.append(Check(name, OK, f"credenciales de {base} en {where}", "Credenciales", key))
         else:
-            out.append(Check(name, FAIL, f"no hay credenciales de la base en {where}: {source.hint}",
-                             "Credenciales", "db-credentials", source.fix))
+            out.append(Check(name, FAIL, f"no hay credenciales de {base} en {where}: {source.hint}",
+                             "Credenciales", key, source.fix))
 
     aliases = _shell_aliases(cfg.doctor_aliases) if cfg.doctor_aliases else {}
     if aliases is None:

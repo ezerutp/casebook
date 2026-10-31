@@ -6,6 +6,7 @@ from casebook.backends import os_tunnel
 from casebook.config import Config
 from demo_pack import acme as _acme
 import fake_web_logs
+from casebook.config import CloudWatchSource
 
 
 @pytest.fixture(autouse=True)
@@ -17,7 +18,7 @@ def _web_logs(monkeypatch):
 def acme():
     """El pack de prueba con CloudWatch en un proveedor que inicia sesión en el navegador."""
     cfg = _acme()
-    cfg.cw_provider, cfg.cw_options = "web-logs", {"api": fake_web_logs.API, "origin": fake_web_logs.ORIGIN}
+    cfg.cloudwatch = {"default": CloudWatchSource("web-logs", {"api": fake_web_logs.API, "origin": fake_web_logs.ORIGIN})}
     return cfg
 
 

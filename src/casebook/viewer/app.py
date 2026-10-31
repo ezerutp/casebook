@@ -169,8 +169,16 @@ def create_app(store: Store, cfg: Config | None = None, served_by: str = "viewer
             ],
             "readonly": {
                 "db_path": str(cfg.db_path),
-                "db": {"ssh_host": cfg.db.ssh_host, "host": cfg.db.host, "database": cfg.db.database},
-                "cloudwatch": cfg.cw_provider or "sin configurar",
+                "mysql": [
+                    {"env": env, "name": config.env_name("mysql", env, src), "ssh_host": src.ssh_host,
+                     "host": src.host, "database": src.database}
+                    for env, src in cfg.mysql.items()
+                ],
+                "cloudwatch": [
+                    {"env": env, "name": config.env_name("cloudwatch", env, src), "provider": src.provider,
+                     "profile": src.options.get("profile", "")}
+                    for env, src in cfg.cloudwatch.items()
+                ],
                 "opensearch": [
                     {"env": env, "domain": e.domain or e.options.get("url", ""), "tunnel_port": e.tunnel_port or "",
                      "ssh_host": e.ssh_host, "provider": e.provider}
