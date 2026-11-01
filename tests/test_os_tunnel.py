@@ -68,7 +68,7 @@ def test_doctor_reports_missing_conversions_login_without_opening_tunnel(monkeyp
         raise AssertionError("no debe abrir un túnel sin credenciales")
 
     monkeypatch.setattr(os_tunnel, "ensure", unexpected_tunnel)
-    monkeypatch.setattr(doctor, "check_db", lambda cfg: [])
+    monkeypatch.setattr(doctor, "check_db", lambda *a: [])
     from casebook.providers import cloudwatch
 
     monkeypatch.setattr(cloudwatch.Aws, "doctor_checks", lambda self, heal=True: [])  # nada de AWS real

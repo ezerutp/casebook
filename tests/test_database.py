@@ -9,7 +9,7 @@ from mcp.server.mcpserver.exceptions import ToolError
 from casebook import guards
 from casebook.backends import mysql
 from casebook.backends.errors import BackendError
-from casebook.config import Config, Database
+from casebook.config import Config, Database, MySqlSource
 from casebook.events import Recorder
 from casebook.server import build
 from casebook.store import Store
@@ -95,10 +95,10 @@ def test_to_json():
 
 def test_client_refuses_writer_endpoint():
     with pytest.raises(BackendError, match="reader"):
-        mysql.MySQLClient(Database(host="db.cluster-abc.example.com", reader_host_pattern="cluster-ro"))
+        mysql.MySQLClient(MySqlSource(host="db.cluster-abc.example.com", reader_host_pattern="cluster-ro"))
     with pytest.raises(BackendError, match="no hay base configurada"):
-        mysql.MySQLClient(Database())
-    mysql.MySQLClient(Database(host="replica.example.com"))  # sin patrón: alcanzan las otras capas
+        mysql.MySQLClient(MySqlSource())
+    mysql.MySQLClient(MySqlSource(host="replica.example.com"))  # sin patrón: alcanzan las otras capas
 
 
 class FakeCursor:
@@ -143,7 +143,7 @@ def test_connect_verifies_reader_and_sets_session(monkeypatch, read_only):
     monkeypatch.setattr(mysql.credentials, "get_db_login", lambda *a: ("u", "p"))
     monkeypatch.setattr(mysql.SshTunnel, "ensure", lambda self: 4321)
     monkeypatch.setattr(mysql.pymysql, "connect", lambda **kw: conn)
-    client = mysql.MySQLClient(Database(host="replica.example.com"))
+    client = mysql.MySQLClient(MySqlSource(host="replica.example.com"))
     if any(read_only):
         assert client._connect() is conn
         assert conn.executed == ["SELECT @@innodb_read_only, @@super_read_only", "SET SESSION MAX_EXECUTION_TIME = 15000"]
@@ -264,7 +264,7 @@ def test_db_describe_and_tables(server):
 
 def test_query_runs_inside_read_only_transaction(monkeypatch):
     executed = []
-    client = mysql.MySQLClient(Database(host="replica.example.com"))
+    client = mysql.MySQLClient(MySqlSource(host="replica.example.com"))
 
     def fake_execute(sql):
         executed.append(sql)

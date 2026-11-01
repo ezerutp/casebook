@@ -4,7 +4,7 @@ build-backend = "hatchling.build"
 
 [project]
 name = "casebook"
-version = "0.3.0"
+version = "0.4.0"
 description = "Herramientas MCP de solo lectura para investigar casos de soporte, con un visor en vivo"
 readme = "README.md"
 license = "MIT"

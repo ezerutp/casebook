@@ -478,10 +478,23 @@ def reading(triage: Triage, code_paths: list[str] | None) -> str:
     return (" " + " ".join(parts)) if parts else ""
 
 
+def _environments(envs: dict[str, list[str]] | None) -> str:
+    """Con varios entornos de una fuente, el análisis tiene que elegir uno en cada consulta: si no lo sabe, su
+    primera consulta falla y gasta una del tope."""
+    if not envs:
+        return ""
+    listed = "; ".join(f"{what}: {', '.join(names)}" for what, names in envs.items())
+    return (f" Hay varios entornos ({listed}): pasa `env` en cada consulta a esas fuentes. Usa el que corresponda "
+            "al caso; si el hilo no lo dice, el de los clientes (normalmente prod). Di en la evidencia de qué "
+            "entorno sale cada dato.")
+
+
 def analysis_prompt(job: Job, channel_id: str, session_id: int, continues: bool = False,
-                    triage: Triage | None = None, code_paths: list[str] | None = None) -> str:
+                    triage: Triage | None = None, code_paths: list[str] | None = None,
+                    environments: dict[str, list[str]] | None = None) -> str:
     """continues: la sesión ya tiene el análisis del mensaje principal del hilo (es una repregunta).
-    code_paths: las carpetas con el código local que el análisis puede leer."""
+    code_paths: las carpetas con el código local que el análisis puede leer.
+    environments: los tipos de fuente con varios entornos (config.ambiguous_envs)."""
     if job.also:
         what = (f"{len(job.also) + 1} respuestas nuevas en el hilo {job.thread_ts} (posteriores a ts {job.since}; "
                 f"la última, de {job.user_name}, ts {job.ts})")
@@ -522,7 +535,8 @@ def analysis_prompt(job: Job, channel_id: str, session_id: int, continues: bool 
                                 "queden en el visor). ")
         + "Empieza por knowledge_search (esquemas e índices ya verificados) y consulta las fuentes con los datos "
         f"concretos del caso (IDs, emails, fechas del hilo y de las capturas): hasta {triage.max_queries} consultas, "
-        "siempre acotadas (os_count antes de os_search, db_select con LIMIT, cw_estimate antes de cw_query). Cada "
+        "siempre acotadas (os_count antes de os_search, db_select con LIMIT, cw_estimate antes de cw_query)."
+        + _environments(environments) + " Cada "
         "hallazgo lo confirmas o descartas con otra consulta; no te quedes con la primera hipótesis. Si es una "
         "pregunta de lógica del producto y no hace falta evidencia de las fuentes, no consultes. Busca con "
         f"{ATLASSIAN}searchJiraIssuesUsingJql (solo lectura) si ya hay una card con el mismo síntoma y anótala en "
@@ -1159,7 +1173,7 @@ class SlackWatcher:
         try:
             code_paths = config.code_dirs(self.cfg.slack_code_paths)
             result = self._call(analysis_prompt(job, self.cfg.slack_channel_id, session["id"], continues,
-                                                self.cfg.slack_triage, code_paths),
+                                                self.cfg.slack_triage, code_paths, config.ambiguous_envs(self.cfg)),
                                 self.cfg.slack_analysis_model, analysis_schema(self.cfg.slack_triage),
                                 analysis_tools(self.cfg.slack_triage, code_paths), ANALYSIS_TIMEOUT_S)
         except ClaudeError as exc:

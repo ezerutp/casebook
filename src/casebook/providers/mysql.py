@@ -1,12 +1,13 @@
 """Proveedor de SQL: MySQL (réplica de solo lectura) por un túnel SSH (`ssh -N -L` a un host de ~/.ssh/config).
 
-Las capas de solo lectura están en backends/mysql.py. Las credenciales salen de [db.credentials] (archivo con
-`export X=...` o variables de entorno) y, si ahí no hay, del keyring (`casebook login db`).
+Las capas de solo lectura están en backends/mysql.py. Las credenciales salen de las [credentials] de cada base
+(archivo con `export X=...` o variables de entorno) y, si ahí no hay, del keyring (`casebook login <id>`).
 """
 
 from __future__ import annotations
 
 from ..backends.mysql import MySQLClient
+from ..config import MySqlSource
 from . import Field
 from .base import Provider
 
@@ -25,13 +26,16 @@ class MysqlSsh(Provider):
               help="una guarda más contra el writer; en Aurora, \"cluster-ro\""),
     )
 
+    def source(self) -> MySqlSource:
+        return self.cfg.mysql[self.system.env]
+
     def login_hint(self) -> str:
-        return self.cfg.db.credentials.hint
+        return self.source().credentials.hint
 
     def client(self) -> MySQLClient:
-        return MySQLClient(self.cfg.db)
+        return MySQLClient(self.source(), self.cfg.db, self.system.keyring, self.system.id)
 
     def doctor_checks(self, heal: bool = True):
         from ..doctor import check_db
 
-        return check_db(self.cfg)
+        return check_db(self.cfg, self.system)

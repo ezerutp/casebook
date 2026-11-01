@@ -505,3 +505,40 @@ def test_gui_slack_page_shows_candidates_and_saves_the_choice(ctx, code_env, mon
     page._clear_code()
     assert steps.code_paths() is None
     window.close()
+
+
+def test_gui_login_rows_follow_the_pack_installed_during_the_wizard(ctx, monkeypatch):
+    """Las páginas se construyen al abrir la ventana; el pack se instala después (paso de configuración). Antes el paso
+    de inicio de sesión quedaba con la lista de servicios de cuando se abrió (vacía en una instalación nueva)."""
+    pytest.importorskip("PySide6")
+    monkeypatch.setenv("QT_QPA_PLATFORM", "offscreen")
+    from PySide6.QtWidgets import QApplication
+
+    from casebook.setup import gui
+    from demo_pack import no_pack
+
+    _fast_checks(monkeypatch)
+    ctx.dry_run = True
+    marker = config.PACKS_DIR / "active"
+    no_pack()  # el asistente se abre sin pack…
+    app = QApplication.instance() or QApplication([])
+    window = gui.InstallerWindow(ctx, gui.DARK)
+    page = next(p for p in window.pages if isinstance(p, gui.SessionsPage))
+    marker.write_text("acme\n")  # …y el pack se instala en el paso de configuración
+
+    def enter():
+        page.enter()
+        page.entered = True
+        gui.QThreadPool.globalInstance().waitForDone(5000)
+        app.processEvents()
+
+    enter()
+    assert list(page.rows) == ["os", "os-archive"]  # las fuentes del pack, con su estado
+    assert all(w["chip"].text.text() == "Sin sesión" for w in page.rows.values())
+    assert len(page.row_list.rows) == 3  # y la fila de MySQL
+
+    (config.CONFIG_PATH.parent).mkdir(parents=True, exist_ok=True)
+    config.CONFIG_PATH.write_text('[sources.opensearch.staging]\ndomain = "s.example"\ntunnel_port = 9200\n')
+    enter()  # el pack (o config.toml) cambió: las filas se rearman
+    assert list(page.rows) == ["os", "os-archive", "os-staging"]
+    window.close()

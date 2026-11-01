@@ -21,9 +21,9 @@ def path(tmp_path):
 def test_without_pack_there_are_no_sources(path):
     no_pack()
     cfg = config.load(path)
-    assert cfg.pack is None and cfg.opensearch == {} and not cfg.cw_provider and not cfg.db.provider
+    assert cfg.pack is None and cfg.opensearch == {} and cfg.cloudwatch == {} and cfg.mysql == {}
     assert systems.all_systems(cfg) == [] and cfg.slack_channel_id == ""
-    assert (cfg.db.host, cfg.cw_options, cfg.doctor_aliases) == ("", {}, [])
+    assert (cfg.cw_provider, cfg.cw_options, cfg.doctor_aliases) == ("", {}, [])
 
 
 def test_without_pack_doctor_says_what_is_missing(path, monkeypatch):
@@ -48,7 +48,8 @@ def test_active_pack_is_the_base_layer(path):
     cfg = config.load(path)
     assert (cfg.pack.name, cfg.pack.display_name) == ("acme", "Acme")
     assert [s.id for s in systems.all_systems(cfg)] == ["os", "os-archive", "cw", "db"]
-    assert cfg.db.reader_host_pattern == "cluster-ro" and cfg.db.credentials.fix == "db-login"
+    db = cfg.mysql["default"]  # el formato de una sola base: la instancia default
+    assert db.reader_host_pattern == "cluster-ro" and db.credentials.fix == "db-login"
     assert cfg.doctor_aliases == ["db-login", "os-prod", "os-prod-archive"]
 
 
@@ -70,8 +71,9 @@ def test_legacy_format_is_still_read(path):
     assert cfg.os_max_size == 500 and cfg.opensearch["prod"].domain == "otro.example.com"
     assert cfg.opensearch["prod"].system == "os"  # el resto sale del pack
     assert cfg.cw_options["region"] == "eu-west-1" and cfg.cw_provider == "aws" and cfg.cw_max_cost_usd == 1.0
-    assert cfg.db.ssh_host == "salto" and cfg.db.default_limit == 7 and cfg.db.database == "acme"
-    assert cfg.db.credentials.hint == "pídelas" and cfg.db.credentials.kind == "env-file"
+    db = cfg.mysql["default"]
+    assert db.ssh_host == "salto" and cfg.db.default_limit == 7 and db.database == "acme"
+    assert db.credentials.hint == "pídelas" and db.credentials.kind == "env-file"
 
 
 def test_changing_the_provider_replaces_the_source(path):

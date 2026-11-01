@@ -25,6 +25,13 @@ class Provider:
         self.cfg = cfg
         self.system = system
 
+    @property
+    def options(self) -> dict[str, Any]:
+        """Las opciones validadas de la fuente de este sistema ([sources.<tipo>.<env>]). Con varias fuentes del
+        mismo tipo, cada instancia del proveedor ve las suyas: un plugin las lee de aquí, no de cfg.cw_options."""
+        src = getattr(self.cfg, self.system.kind, {}).get(self.system.env)
+        return getattr(src, "options", {}) if src is not None else {}
+
     def login_target(self) -> BrowserTarget | None:
         """auth="browser": dónde iniciar sesión y cómo validar la cookie."""
         return None

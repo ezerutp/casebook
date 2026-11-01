@@ -445,6 +445,7 @@ main { min-width: 0; padding-bottom: 60px; overflow-wrap: anywhere; }
 .query-ref.svc-db { --svc: var(--svc-db); }
 .query-ref .svc-icon, .query-ref .svc-icon svg { width: 12px; height: 12px; color: var(--svc); }
 .query-ref .ref-tool { font-weight: 500; }
+.query-ref .env-pill { font-size: 9.5px; line-height: 14px; padding: 0 4px; border-radius: 3px; }
 .query-ref .ref-id { font-family: var(--mono); font-size: 11px; color: var(--muted); }
 
 /* Modal con la tarjeta citada. */
@@ -559,15 +560,45 @@ main { min-width: 0; padding-bottom: 60px; overflow-wrap: anywhere; }
 .card .meta { margin-top: 4px; }
 .card .meta:empty { display: none; }
 .card .card-head .meta { margin-top: 0; }
+/* El entorno de la consulta (prod, qa…): después del ícono del servicio, en mayúsculas y con fondo sólido. El
+   texto va del color del panel, así contrasta con el tono en los dos temas. */
+.card .env-pill {
+  --tone: var(--muted);
+  font-size: 10.5px;
+  font-weight: 700;
+  letter-spacing: 0.06em;
+  line-height: 18px;
+  padding: 0 6px;
+  border-radius: 4px;
+  color: var(--panel);
+  background: var(--tone);
+  white-space: nowrap;
+}
+.card .env-pill[data-tone="prod"] { --tone: var(--fail); }
+/* qa en el color del texto (blanco en oscuro, casi negro en claro): neutro, no choca con ningún servicio y deja que
+   PROD sea lo que llama la atención. staging en violeta: el azul es el de MySQL. */
+.card .env-pill[data-tone="qa"] { --tone: var(--text); }
+.card .env-pill[data-tone="staging"] { --tone: var(--svc-note); }
+.card .env-pill[data-tone="dev"], .card .env-pill[data-tone="ok"] { --tone: var(--ok); }
+.card .env-pill[data-tone="note"] { --tone: var(--svc-note); }
+
+/* El nombre de la tool, como la etiqueta del entorno: fondo sólido del color del servicio (el de la barra de la
+   tarjeta) y monoespaciada, para que se distinga del entorno. Sin servicio conocido, gris. */
 .card .tool {
+  --tone: var(--muted);
   font-family: var(--mono);
   font-size: 11.5px;
-  font-weight: 500;
-  color: var(--muted);
-  border: 1px solid var(--border);
+  font-weight: 600;
+  line-height: 18px;
+  color: var(--panel);
+  background: var(--tone);
   border-radius: 4px;
   padding: 0 6px;
+  white-space: nowrap;
 }
+.card.svc-os .tool { --tone: var(--svc-os); }
+.card.svc-cw .tool { --tone: var(--svc-cw); }
+.card.svc-db .tool { --tone: var(--svc-db); }
 .card .purpose { font-weight: 600; min-width: 0; flex: 1 1 240px; }
 
 .svc-icon { display: inline-flex; width: 18px; height: 18px; flex: none; }

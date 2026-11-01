@@ -61,3 +61,32 @@ def expected_errors(recorder: Recorder, cfg: Config | None = None):
         return wrapper
 
     return decorate
+
+
+# --- varias fuentes del mismo tipo ([sources.<tipo>.<env>]) --------------------------------------------------
+
+
+def envs_doc(what: str, about: dict[str, str]) -> str:
+    """El párrafo de `env` para la descripción de las tools de un tipo con varias fuentes ({env: qué hay}). Con una
+    sola no hace falta decir nada: `env` es opcional."""
+    if len(about) < 2:
+        return ""
+    listed = ", ".join(f'"{env}"' + (f" ({text})" if text else "") for env, text in about.items())
+    return f"env: {what}, uno de {listed}. Es obligatorio: no hay uno por defecto, elige a propósito."
+
+
+def resolve_env(what: str, names: dict[str, str], env: str | None) -> str:
+    """La clave del entorno de una llamada (`names` es {nombre para Claude: clave}, de config.env_names): el que
+    pide, por su nombre o su clave, o el único que hay. Con varias fuentes (prod y qa, por ejemplo) no se elige
+    solo: equivocarse de entorno es peor que preguntar."""
+    if not names:
+        raise guards.GuardError(f"no hay {what} configurado en config.toml ni en el pack")
+    if env is None:
+        if len(names) == 1:
+            return next(iter(names.values()))
+        raise guards.GuardError(f"hay varios entornos de {what} ({', '.join(names)}): indica `env`")
+    if env in names:
+        return names[env]
+    if env in names.values():  # la clave: "default" sigue sirviendo aunque se llame prod
+        return env
+    raise guards.GuardError(f"entorno desconocido {env!r} para {what}; opciones: {', '.join(names)}")

@@ -36,7 +36,7 @@ acme/
 name = "acme"            # minúsculas, números, - o _
 version = "1.2.0"
 display_name = "Acme"
-requires = ">=0.2.0"     # opcional: versión mínima de la app
+requires = ">=0.4.0"     # opcional: versión mínima de la app (0.4.0 para varios entornos de MySQL o CloudWatch)
 
 [[requires.plugins]]     # opcional: proveedores que no vienen con la app (código)
 name = "acme-logs"

@@ -20,6 +20,7 @@ from casebook.server import build
 from casebook.store import Store
 from casebook.tools import cloudwatch
 from casebook.viewer.app import create_app
+from casebook.config import CloudWatchSource
 from demo_pack import acme
 
 
@@ -61,7 +62,7 @@ def env(tmp_path, monkeypatch):
     monkeypatch.setattr(cloudwatch, "POLL_SECONDS", 0)
     fake = fake_logs.install(monkeypatch)
     cfg = approval_timeout(acme(), 1.0)
-    cfg.cw_provider, cfg.cw_options = "fake", {}
+    cfg.cloudwatch = {"default": CloudWatchSource("fake", {})}
     store = Store(tmp_path / "t.db")
     rec = Recorder(store)
     rec.start_session("SUP-1")

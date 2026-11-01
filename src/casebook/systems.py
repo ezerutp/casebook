@@ -1,4 +1,4 @@
-"""Registro de los sistemas con sesión: un entorno de OpenSearch por cada uno de config.toml, CloudWatch y MySQL.
+"""Registro de los sistemas con sesión: uno por cada fuente de config.toml ([sources.<tipo>.<nombre>]).
 
 Cada sistema tiene el id que se usa en `login <id>`, la entrada del keyring donde se guarda su sesión, el proveedor
 que habla con él (providers/) y los textos para mostrarlo. Es la única fuente de esa lista: el login, el native
@@ -10,7 +10,7 @@ from __future__ import annotations
 from dataclasses import dataclass
 from typing import Any
 
-from . import providers
+from . import config, providers
 from .config import Config
 
 
@@ -22,7 +22,7 @@ class System:
     label: str
     description: str = ""
     check: str = ""  # nombre del chequeo en doctor y en el visor
-    env: str | None = None  # el entorno, para OpenSearch
+    env: str | None = None  # el nombre de la instancia ([sources.<tipo>.<env>]); el `env` de las tools
     provider: str = ""  # el `provider` de config.toml
     auth: str = "none"  # "browser", "secret", "external", "none" o "missing" (el proveedor no está instalado)
     short: str = ""  # nombre corto para el panel de conexiones del visor
@@ -33,7 +33,8 @@ class System:
         return self.auth == "browser"
 
 
-# Entrada del keyring de MySQL (`login db`). La de CloudWatch la puede fijar el proveedor (keyring_entry).
+# Entrada del keyring de la base DEFAULT (`login db`); otra base usa mysql-<nombre>. La de CloudWatch la puede
+# fijar el proveedor (keyring_entry).
 MYSQL_KEYRING = "mysql-prod-reader"
 
 # El tipo de sistema -> el `kind` de sus proveedores.
@@ -50,7 +51,7 @@ def _auth(kind: str, name: str, options: dict[str, Any]) -> str:
 def opensearch(cfg: Config, env: str) -> System:
     target = cfg.opensearch[env]
     return System(
-        target.system or f"os-{env}",
+        config.system_id("opensearch", env, target.system),
         "opensearch",
         f"opensearch-{env}",
         target.label or f"OpenSearch {env}",
@@ -63,27 +64,60 @@ def opensearch(cfg: Config, env: str) -> System:
     )
 
 
-def cloudwatch(cfg: Config) -> System:
-    cls = providers.get("logs", cfg.cw_provider)
-    description = f"Log Insights ({cls.label})" if cls else "Log Insights"
-    keyring_entry = getattr(cls, "keyring_entry", None) or f"cloudwatch-{cfg.cw_provider}"
-    return System("cw", "cloudwatch", keyring_entry, "CloudWatch", description, f"cloudwatch ({cfg.cw_provider})", None,
-                  cfg.cw_provider, _auth("cloudwatch", cfg.cw_provider, cfg.cw_options), short=cfg.cw_provider)
+def _single(cfg: Config, kind: str) -> str:
+    """El nombre de la única instancia de un tipo (para llamadas que no dicen cuál)."""
+    names = list(getattr(cfg, kind))
+    if len(names) != 1:
+        raise KeyError(f"{kind}: hay {len(names)} fuentes ({', '.join(names) or 'ninguna'}); di cuál")
+    return names[0]
 
 
-def mysql(cfg: Config) -> System:
-    return System("db", "mysql", MYSQL_KEYRING, "MySQL réplica", "réplica de solo lectura", "mysql (reader)",
-                  None, cfg.db.provider, _auth("mysql", cfg.db.provider, {}), short="db")
+def cloudwatch(cfg: Config, env: str | None = None) -> System:
+    env = env or _single(cfg, "cloudwatch")
+    src = cfg.cloudwatch[env]
+    default = env == config.DEFAULT
+    name = config.env_name("cloudwatch", env, src)
+    cls = providers.get("logs", src.provider)
+    description = src.description or (f"Log Insights ({cls.label})" if cls else "Log Insights")
+    keyring_entry = getattr(cls, "keyring_entry", None) or f"cloudwatch-{src.provider}"
+    return System(
+        config.system_id("cloudwatch", env, src.system),
+        "cloudwatch",
+        keyring_entry if default else f"{keyring_entry}-{env}",
+        # Con el nombre que ven Claude y el visor: «CloudWatch prod» si la default tiene environment.
+        src.label or ("CloudWatch" if name == config.DEFAULT else f"CloudWatch {name}"),
+        description,
+        f"cloudwatch ({src.provider})" if default else f"cloudwatch:{env} ({src.provider})",
+        env,
+        src.provider,
+        _auth("cloudwatch", src.provider, src.options),
+        short=src.provider if default else f"cw-{env}",
+    )
+
+
+def mysql(cfg: Config, env: str | None = None) -> System:
+    env = env or _single(cfg, "mysql")
+    src = cfg.mysql[env]
+    default = env == config.DEFAULT
+    name = config.env_name("mysql", env, src)
+    return System(
+        config.system_id("mysql", env, src.system),
+        "mysql",
+        MYSQL_KEYRING if default else f"mysql-{env}",
+        src.label or ("MySQL réplica" if name == config.DEFAULT else f"MySQL {name}"),
+        src.description or "réplica de solo lectura",
+        "mysql (reader)" if default else f"mysql:{env}",
+        env,
+        src.provider,
+        _auth("mysql", src.provider, src.options),
+        short="db" if default else f"db-{env}",
+    )
 
 
 def all_systems(cfg: Config) -> list[System]:
     """Los sistemas configurados (en config.toml o en el pack), en orden: OpenSearch, CloudWatch, MySQL."""
-    out = [opensearch(cfg, env) for env in cfg.opensearch]
-    if cfg.cw_provider:
-        out.append(cloudwatch(cfg))
-    if cfg.db.provider:
-        out.append(mysql(cfg))
-    return out
+    return [*(opensearch(cfg, env) for env in cfg.opensearch), *(cloudwatch(cfg, env) for env in cfg.cloudwatch),
+            *(mysql(cfg, env) for env in cfg.mysql)]
 
 
 def browser_systems(cfg: Config) -> list[System]:

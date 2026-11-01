@@ -71,14 +71,16 @@ plan_max_rows = 5000000       # EXPLAIN: filas estimadas máximas del plan
 default_limit = 100           # LIMIT que se agrega a un SELECT sin LIMIT
 max_limit = 5000              # LIMIT máximo aceptado
 
-[sources.mysql]
+[sources.mysql.prod]          # una base: [sources.mysql.<entorno>]; el id es db-<entorno> (`casebook login db-prod`)
 provider = "mysql-ssh"
 ssh_host = "bastion"          # el host de ~/.ssh/config por el que se abre el túnel
 host = "replica.db.internal"  # la réplica de solo lectura, nunca el writer
 database = "app"
 reader_host_pattern = ""      # opcional: texto que tiene que estar en el host (en Aurora, "cluster-ro")
+environment = "prod"          # opcional: cómo se nombra en el conocimiento (<environment>/<database>); vacío = el host
+label = "MySQL prod"          # opcional, como en OpenSearch (también `system` y `description`)
 
-[sources.mysql.credentials]   # de dónde salen usuario y contraseña (si no hay, se usa `casebook login db`)
+[sources.mysql.prod.credentials]  # de dónde salen usuario y contraseña (si no hay, `casebook login db-prod`)
 kind = "env-file"             # "env-file" (líneas `export X=...`), "env" (variables de entorno) o "keyring"
 path = "~/.db/credentials"    # env-file
 user_var = "DB_USER"
@@ -90,6 +92,39 @@ fix = ""                      # un comando que las genera, si lo hay
 El formato anterior (`[opensearch.envs.<env>]`, `provider` dentro de `[cloudwatch]`, y `ssh_host`/`host`/`credentials`
 dentro de `[db]`) se sigue leyendo; si están los dos, manda `[sources.*]`. Si cambias el `provider` de una fuente del pack, la fuente se
 reemplaza entera (las opciones del proveedor anterior no se arrastran).
+
+### Varios entornos de una fuente
+
+Cada tipo de fuente admite varias, una por tabla `[sources.<tipo>.<entorno>]`: por ejemplo la base de prod y la de
+qa, o dos cuentas de CloudWatch. Cada una es un sistema aparte, con su id (`db-qa`, `cw-qa`), su chequeo en el
+doctor, su entrada del keyring y su lugar en Ajustes → Fuentes. En las tools se elige con `env`:
+
+```toml
+[sources.mysql.qa]            # junto a la base que trae el pack
+provider = "mysql-ssh"
+ssh_host = "bastion-qa"
+host = "app-qa.cluster-ro-xyz.rds.amazonaws.com"
+database = "app_qa"
+environment = "qa"            # así los esquemas de qa no pisan los de prod en el conocimiento
+
+[sources.cloudwatch.qa]
+provider = "aws"
+profile = "soporte-qa"
+```
+
+Con `casebook source add mysql --env qa` (o desde el visor) se agrega sin editar el archivo.
+
+- Una fuente escrita como antes, con sus opciones directo en `[sources.mysql]` o `[sources.cloudwatch]`, es el
+  entorno `default`: conserva los ids `db` y `cw` y sus credenciales guardadas. Por eso un pack con el formato de
+  una sola base sigue igual, y tú le sumas `[sources.mysql.qa]` en tu `config.toml`.
+- Si esa fuente tiene `environment` (por ejemplo `environment = "prod"`), Claude y el visor la ven como `prod`
+  en vez de `default`; `env="default"` sigue funcionando. No puede haber además una `[sources.mysql.prod]`.
+- Con un solo entorno de una fuente, `env` es opcional. Con más de uno es **obligatorio**, también en OpenSearch:
+  la tool responde con los entornos que hay en vez de elegir sola, para no consultar prod creyendo que es qa (o
+  prod creyendo que es el archivo). Si una skill de tu pack llama a `os_*` sin `env` y hay varios entornos,
+  agrégale cuál usar.
+- Las guardas (`[db]`, `[cloudwatch]`, `[opensearch]`) valen para todos los entornos.
+- Un entorno nuevo aparece en las tools al reiniciar Claude Code.
 
 ## Textos para Claude
 
@@ -151,8 +186,8 @@ deshabilitada y el doctor lo dice.
 |---|---|---|---|
 | `[sources.opensearch.<env>]` | `dashboards-proxy` (por defecto) | navegador (cookie de Dashboards) | `domain`, `tunnel_port`, `ssh_host` |
 | `[sources.opensearch.<env>]` | `direct` | keyring (`login os-<env>`) | `url`, `auth` (`basic`, `api-key` o `none`), `ssh_host` (túnel opcional), `verify_tls` |
-| `[sources.cloudwatch]` | `aws` | perfil de AWS (`aws sso login`) | `profile`, `region`, `price_per_gb`, `log_group_prefixes` |
-| `[sources.mysql]` | `mysql-ssh` (por defecto) | `[sources.mysql.credentials]` o keyring | `ssh_host`, `host` (reader), `port`, `database`, `reader_host_pattern` |
+| `[sources.cloudwatch.<env>]` | `aws` | perfil de AWS (`aws sso login`) | `profile`, `region`, `price_per_gb`, `log_group_prefixes` |
+| `[sources.mysql.<env>]` | `mysql-ssh` (por defecto) | `[sources.mysql.<env>.credentials]` o keyring | `ssh_host`, `host` (reader), `port`, `database`, `reader_host_pattern` |
 
 ```toml
 [sources.opensearch.lab]       # un cluster con la API REST abierta, sin Dashboards
@@ -161,7 +196,7 @@ url = "https://search.lab.internal:9200"
 auth = "basic"                 # el usuario y la contraseña se guardan con `casebook login os-lab`
 ssh_host = "bastion-lab"       # opcional: `ssh -L` hacia la URL
 
-[sources.cloudwatch]           # Logs Insights directo con tu perfil de AWS (pip install 'casebook[aws]')
+[sources.cloudwatch.prod]      # Logs Insights directo con tu perfil de AWS (pip install 'casebook[aws]')
 provider = "aws"
 profile = "soporte"
 region = "us-east-1"
@@ -172,4 +207,5 @@ Con `aws`, el estimado de `cw_estimate` y `cw_query` es aproximado: CloudWatch n
 lo almacenado del log group y se supone que se reparte parejo en el tiempo que cubre (su retención o su edad).
 
 Un plugin suma proveedores con un entry point del grupo `casebook.providers` que apunta a la clase (con
-`kind`, `name`, `auth`, `fields` y los métodos de `providers/base.py`).
+`kind`, `name`, `auth`, `fields` y los métodos de `providers/base.py`). El proveedor lee sus opciones de
+`self.options` (las de su entorno); `cfg.cw_options` queda por compatibilidad y es solo el primer CloudWatch.

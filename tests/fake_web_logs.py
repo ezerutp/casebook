@@ -6,6 +6,7 @@ from casebook import providers
 from casebook.login import BrowserTarget, Validation
 from casebook.providers import Field
 from casebook.providers.base import Provider
+from casebook.config import CloudWatchSource
 
 API, ORIGIN = "https://api-logs.acme.example", "https://logs.acme.example"
 MESSAGES = {"NO_SESSION": "el navegador todavía no tiene una sesión", "EXPIRED": "esa sesión ya venció"}
@@ -43,7 +44,7 @@ def install(monkeypatch, cfg):
     """Registra el proveedor y pone CloudWatch de `cfg` a usarlo. Devuelve cfg."""
     monkeypatch.setitem(providers.BUILTIN, ("logs", "web-logs"), f"{__name__}:WebLogsProvider")
     monkeypatch.setattr(providers, "_registry", None)
-    cfg.cw_provider, cfg.cw_options = "web-logs", {"api": API, "origin": ORIGIN}
+    cfg.cloudwatch = {"default": CloudWatchSource("web-logs", {"api": API, "origin": ORIGIN})}
     return cfg
 
 

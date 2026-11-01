@@ -233,18 +233,19 @@ def cmd_login(args: argparse.Namespace) -> int:
         print(f"error: {systems.missing_provider_message(system)}", file=sys.stderr)
         return 1
     if system.kind == "mysql":
-        source = cfg.db.credentials
+        source = cfg.mysql[system.env].credentials
+        where = credentials.describe_source(source, system.id)
         if credentials.external_db_login(source):
-            print(f"No hace falta: se usan las credenciales de {credentials.describe_source(source)}.")
+            print(f"No hace falta: se usan las credenciales de {where}.")
             print(f"Si dejaron de funcionar: {source.hint}.")
             return cmd_doctor(args)
         if source.kind != "keyring":
-            print(f"No encontré credenciales en {credentials.describe_source(source)}. Lo más simple: {source.hint}.")
-        print("Si prefieres, ingrésalas aquí y van al keyring del sistema.")
+            print(f"No encontré credenciales en {where}. Lo más simple: {source.hint}.")
+        print(f"Si prefieres, ingrésalas aquí y van al keyring del sistema ({system.label}).")
         user = input("usuario: ").strip()
         password = getpass.getpass("contraseña: ")
         try:
-            credentials.set_db_login(user, password)
+            credentials.set_db_login(user, password, system.keyring)
         except ValueError as exc:
             print(f"error: {exc}", file=sys.stderr)
             return 1
@@ -286,7 +287,7 @@ def cmd_logout(args: argparse.Namespace) -> int:
         print(f"sistema desconocido: {args.system}. Opciones: {', '.join(systems.ids(cfg))}", file=sys.stderr)
         return 1
     if system.kind == "mysql":
-        credentials.delete_db_login()
+        credentials.delete_db_login(system.keyring)
     else:
         credentials.delete_cookie(system)  # la misma entrada guarda la cookie o el secreto
     print(f"Credenciales de {args.system} eliminadas del keyring.")
@@ -418,8 +419,10 @@ def cmd_source(args: argparse.Namespace) -> int:
         provider = args.provider or _choose("Proveedor", names, lambda n: next(
             p["label"] for p in catalog[kind]["providers"] if p["name"] == n))
         env = args.env
-        if kind == "opensearch" and not env:
-            env = input("Nombre del entorno (por ejemplo staging): ").strip()
+        if not env:
+            taken = ", ".join(sources.taken_envs(cfg, kind))
+            env = input("Nombre del entorno (por ejemplo prod, qa o staging)"
+                        + (f"; ya hay {taken}" if taken else "") + ": ").strip()
         raw = dict(item.split("=", 1) for item in args.set or [])
         cls = providers.get(sources.PROVIDER_KIND[kind], provider)
         if cls is None:
@@ -667,7 +670,7 @@ def main(argv: list[str] | None = None) -> int:
     ):
         p = sub.add_parser(name, help=help_)
         # Sin choices: los sistemas salen de config.toml y se validan al correr el comando.
-        p.add_argument("system", help="id del sistema (por ejemplo os, cw o db)")
+        p.add_argument("system", help="id del sistema (por ejemplo os, cw, db o db-qa; ver `source list`)")
         if name == "login":
             p.add_argument("--browser", action="store_true", help=argparse.SUPPRESS)
             p.add_argument("--browser-timeout", type=_browser_timeout, metavar="SEGUNDOS", default=300,
@@ -696,7 +699,7 @@ def main(argv: list[str] | None = None) -> int:
     p.add_argument("action", nargs="?", default="list", choices=["list", "add", "test", "remove"])
     p.add_argument("target", nargs="?", help="add: el tipo; test/remove: el id de la fuente")
     p.add_argument("--provider", help="add: el proveedor (por ejemplo direct, aws, mysql-ssh)")
-    p.add_argument("--env", help="add (opensearch): el nombre del entorno")
+    p.add_argument("--env", help="add: el nombre del entorno (prod, qa, staging...); con uno que ya existe, lo reemplaza")
     p.add_argument("--set", action="append", metavar="CLAVE=VALOR", help="add: una opción, sin preguntar (se repite)")
     p.set_defaults(func=cmd_source)
 

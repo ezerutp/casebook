@@ -279,7 +279,7 @@ def test_cw_query_end_to_end_with_aws(tmp_path, monkeypatch):
 
 def test_db_credentials_from_env(tmp_path, monkeypatch):
     cfg = load(tmp_path, '[db.credentials]\nkind = "env"\nuser_var = "DB_U"\npassword_var = "DB_P"\nhint = "pídelas"\n')
-    source = cfg.db.credentials
+    source = cfg.mysql["default"].credentials
     assert credentials.external_db_login(source) is None
     monkeypatch.setenv("DB_U", "ana")
     monkeypatch.setenv("DB_P", "x")
