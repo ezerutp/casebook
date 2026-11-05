@@ -89,8 +89,8 @@ class FakeRunner:
         self.results = list(results)
         self.calls = []
 
-    def __call__(self, prompt, model, schema, allowed, timeout, holder=None):
-        self.calls.append({"prompt": prompt, "model": model, "allowed": allowed})
+    def __call__(self, prompt, model, schema, allowed, timeout, holder=None, effort=None):
+        self.calls.append({"prompt": prompt, "model": model, "allowed": allowed, "effort": effort})
         result = self.results.pop(0)
         if isinstance(result, Exception):
             raise result
@@ -384,6 +384,37 @@ def test_analysis_creates_a_session_with_the_result(tmp_path):
     assert state["analyzing"] is None
 
 
+def test_analysis_thinks_harder_than_the_channel_reader(tmp_path):
+    runner = FakeRunner({"messages": [msg("2.000000")], "replies": []}, ANALYSIS)
+    slack_watch.write_state({"channel_id": "C1", "last_ts": "1.000000"})
+    w, _ = watcher(tmp_path, runner)
+    job = w.poll_once()[0]
+    w.analyze(job)
+    poll, analysis = runner.calls
+    assert poll["effort"] is None and analysis["effort"] == "high"  # el de fábrica de slack.analysis_effort
+    w, _ = watcher(tmp_path, runner := FakeRunner(ANALYSIS), slack_analysis_effort="max")
+    w.analyze(slack_watch.Job("3.000000", "3.000000", "U1", "Ana", "Hey team"))
+    assert runner.calls[0]["effort"] == "max"
+
+
+def test_run_claude_passes_the_effort_only_when_given(monkeypatch):
+    seen = []
+
+    class Proc:
+        returncode = 0
+
+        def __init__(self, command, **kw):
+            seen.append(command)
+
+        def communicate(self, timeout=None):
+            return json.dumps({"is_error": False, "structured_output": {"ok": True}}), ""
+
+    monkeypatch.setattr(slack_watch.subprocess, "Popen", Proc)
+    slack_watch.run_claude("p", "sonnet", {}, slack_watch.READ_TOOLS, 10, effort="high")
+    slack_watch.run_claude("p", "haiku", {}, slack_watch.READ_TOOLS, 10)
+    assert seen[0][seen[0].index("--effort") + 1] == "high" and "--effort" not in seen[1]
+
+
 def test_daily_cap_records_the_message_without_analyzing(tmp_path):
     slack_watch.write_state({"today": {"date": slack_watch._today(), "count": 2}})
     runner = FakeRunner()
@@ -440,6 +471,35 @@ def test_credential_files_are_denied_inside_the_code_folders():
     assert not any("application-prod" in rule or "*.java" in rule for rule in denied)
 
 
+def test_analysis_can_read_the_pack_skills_recipes(tmp_path, monkeypatch):
+    """La skill se carga con Skill, pero sus recetas se leen con Read: sin esto el análisis no las ve."""
+    home = tmp_path / "home"
+    pack_skill = tmp_path / "pack-instalado" / "skills" / "acme-triage"
+    pack_skill.mkdir(parents=True)
+    (home / ".claude" / "skills").mkdir(parents=True)
+    (home / ".claude" / "skills" / "acme-triage").symlink_to(pack_skill)
+    monkeypatch.setenv("HOME", str(home))
+    rules = slack_watch.skill_rules(config.Triage(skill="acme-triage", investigation_skill="acme-investigation"))
+    assert f"Read(/{home}/.claude/skills/acme-triage/**)" in rules  # el enlace
+    assert f"Read(/{pack_skill}/**)" in rules  # y su destino en el pack
+    assert f"Read(/{home}/.claude/skills/acme-investigation/**)" in rules
+    assert slack_watch.skill_rules(config.Triage()) == ()  # sin skills en el pack, nada
+    allowed = slack_watch.analysis_tools(config.Triage(skill="acme-triage"), [])
+    assert set(rules[:2]) <= set(allowed)
+
+
+def test_skill_names_from_the_pack_cannot_open_reading_outside_the_skills(tmp_path, monkeypatch):
+    home = tmp_path / "home"
+    (home / ".claude" / "skills").mkdir(parents=True)
+    monkeypatch.setenv("HOME", str(home))
+    # Un nombre con rutas no abre nada, aunque apunte a la carpeta personal.
+    assert slack_watch.skill_rules(config.Triage(skill="../../..", investigation_skill="a/b")) == ()
+    # Un enlace de skill que apunta a la carpeta personal (o a una que la contiene) tampoco: ni el enlace ni su
+    # destino, porque leer por el enlace también llega al destino.
+    (home / ".claude" / "skills" / "rara").symlink_to(home)
+    assert slack_watch.skill_rules(config.Triage(skill="rara")) == ()
+
+
 def test_pack_tools_are_added_but_never_something_denied():
     triage = config.Triage(allowed_tools=["mcp__claude_ai_X__docs", slack_watch.WRITE_TOOLS[0]])
     allowed = slack_watch.analysis_tools(triage, [])
@@ -480,7 +540,7 @@ def test_analysis_without_code_folders_keeps_the_usual_tools(tmp_path):
     runner = FakeRunner(ANALYSIS)
     w, _ = watcher(tmp_path, runner)
     w.analyze(slack_watch.Job("2.000000", "2.000000", "U1", "Ana", "Hey team"))
-    assert runner.calls[0]["allowed"] == slack_watch.ANALYSIS_TOOLS
+    assert runner.calls[0]["allowed"] == slack_watch.ANALYSIS_TOOLS + slack_watch.skill_rules(w.cfg.slack_triage)
     assert "Código local" not in runner.calls[0]["prompt"]
 
 

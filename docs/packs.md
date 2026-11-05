@@ -36,7 +36,8 @@ acme/
 name = "acme"            # minúsculas, números, - o _
 version = "1.2.0"
 display_name = "Acme"
-requires = ">=0.4.0"     # opcional: versión mínima de la app (0.4.0 para varios entornos de MySQL o CloudWatch)
+requires = ">=0.5.0"     # opcional: versión mínima de la app (0.4.0 para varios entornos de MySQL o CloudWatch;
+                         # 0.5.0 para que el análisis de Slack lea las recetas y archivos de las skills)
 
 [[requires.plugins]]     # opcional: proveedores que no vienen con la app (código)
 name = "acme-logs"

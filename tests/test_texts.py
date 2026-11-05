@@ -71,8 +71,21 @@ def test_analysis_investigates_instead_of_a_cheap_triage():
     assert "no una investigación completa" not in prompt
     assert "Carga la skill acme-investigation" in prompt and "hasta 5 consultas" in prompt
     assert "no llames session_start" in prompt and "similar_cards" in prompt
+    # Busca antes de pedir, lee código o docs en vez de suponer, y revisa antes de devolver: sin salidas fáciles.
+    assert "no consultes" not in prompt and "Antes de pedir un dato, búscalo tú" in prompt
+    assert "ábrelos y léelos, no lo supongas" in prompt and "Antes de devolver, revisa tu análisis" in prompt
+    assert "nadie va a pedirte que profundices" in prompt
     # La respuesta sugerida es para pegar en el hilo: corta y coherente con lo que escribió quien preguntó.
-    assert "máximo 4 frases" in prompt and "para contestarle a Ana" in prompt
+    assert "2 a 4 frases" in prompt and "para contestarle a Ana" in prompt
+    # Varias preguntas: todas, en lista numerada; lo que ya respondió alguien (o un bot) se verifica.
+    assert "contéstalas todas en una lista numerada" in prompt and "verifica esa respuesta" in prompt
+    # Duplicados y fixes recientes también en el canal; los videos no se pueden ver.
+    assert "resuelta hace poco" in prompt and "slack_search_public en el canal (in:<#C1>" in prompt
+    assert "Los videos (Loom, Fathom" in prompt
+    # Un cambio reciente en la cuenta que no se explicó no se descarta como «esperado».
+    assert "No concluyas que algo es esperado si en la cuenta del caso hay un cambio reciente" in prompt
+    # Sin una causa clara después de investigar, se sugiere la card en vez de una conclusión dudosa.
+    assert "la causa o la respuesta siguen sin estar claras y hace falta ir más a fondo" in prompt
     assert "no le pidas lo que ya dio" in prompt and "detalles de programador" in prompt
     # Sin skill de investigación (otro equipo) no se menciona ninguna.
     generic = slack_watch.analysis_prompt(job, "C1", 7)

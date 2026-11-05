@@ -130,7 +130,7 @@ class Triage:
     # La skill de investigación del pack (método y recetas por tipo de caso): el análisis la carga además de `skill`
     # para sostener el resultado con evidencia de las fuentes; vacía = solo la skill de triage.
     investigation_skill: str = ""
-    max_queries: int = 8  # tope de consultas a las fuentes (OpenSearch, MySQL, CloudWatch) por análisis
+    max_queries: int = 20  # tope de consultas a las fuentes (OpenSearch, MySQL, CloudWatch) por análisis
     # Tools extra de solo lectura que el análisis puede usar (por ejemplo, la de documentación de un conector de
     # claude.ai). Nombres exactos `mcp__...`; lo que el análisis tiene negado no se puede habilitar desde aquí.
     allowed_tools: list[str] = field(default_factory=list)
@@ -182,6 +182,8 @@ class Config:
     slack_ask_lookback_on_enable: bool = True  # preguntar ventana al encender en el visor
     slack_poll_model: str = "haiku"
     slack_analysis_model: str = "sonnet"
+    # Cuánto razona el análisis (`claude --effort`): corre solo y no hay nadie para pedirle que profundice.
+    slack_analysis_effort: str = "high"
     slack_max_analyses_per_day: int = 50
     # Carpetas con el código fuente local, separadas por coma: el análisis las puede leer (solo lectura) para entender
     # cómo funciona algo o confirmar un posible bug. Es de cada máquina, así que va en config.toml, no en el pack.
@@ -300,8 +302,17 @@ def _looks_like_write(tool: str) -> bool:
     return any(word in _WRITE_VERBS for word in re.findall(r"[a-z0-9]+", name.lower()))
 
 
-def _private_dirs() -> tuple[Path, ...]:
+def private_dirs() -> tuple[Path, ...]:
     return DATA_DIR, CONFIG_PATH.parent, *(Path.home() / d for d in (".ssh", ".aws", ".gnupg", ".claude"))
+
+
+def too_broad_to_read(path: Path) -> bool:
+    """Si dar lectura a esta carpeta expondría demasiado: la raíz, la carpeta personal o una que la contenga, o una
+    que incluya las credenciales de private_dirs()."""
+    home = Path.home().resolve()
+    if path in (Path("/"), home) or path in home.parents:
+        return True
+    return any(path == private.resolve() or path in private.resolve().parents for private in private_dirs())
 
 
 def code_dirs(value: str | None) -> list[str]:
@@ -320,7 +331,7 @@ def _code_path(raw: str, strict: bool) -> str:
         raise SettingError(f"slack.code_paths: «{raw}» no es una carpeta")
     if path in (Path("/"), Path.home().resolve()):
         raise SettingError("slack.code_paths: no puede ser la raíz ni tu carpeta personal; elige la del código")
-    for private in _private_dirs():
+    for private in private_dirs():
         private = private.resolve()
         if private == path or path in private.parents:
             raise SettingError(f"slack.code_paths: «{raw}» incluye {private}, que guarda credenciales")
@@ -366,6 +377,8 @@ SETTINGS: tuple[Setting, ...] = (
     Setting("slack.ask_lookback_on_enable", "slack_ask_lookback_on_enable", bool),
     Setting("slack.poll_model", "slack_poll_model", str, choices=("haiku", "sonnet", "opus")),
     Setting("slack.analysis_model", "slack_analysis_model", str, choices=("haiku", "sonnet", "opus")),
+    Setting("slack.analysis_effort", "slack_analysis_effort", str,
+            choices=("low", "medium", "high", "xhigh", "max")),
     Setting("slack.max_analyses_per_day", "slack_max_analyses_per_day", int, 1, 500),
     Setting("slack.code_paths", "slack_code_paths", str, optional=True),
     Setting("db.default_limit", "db.default_limit", int, 1, 10_000),

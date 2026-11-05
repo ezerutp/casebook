@@ -57,6 +57,7 @@ default_lookback_minutes = 0  # minutos de mensajes pasados a revisar al encende
 ask_lookback_on_enable = true # preguntar ventana de tiempo al encender el toggle en el visor
 poll_model = "haiku"       # modelo que trae los mensajes nuevos
 analysis_model = "sonnet"  # modelo del triage de cada pedido
+analysis_effort = "high"   # cuánto razona e investiga (low, medium, high, xhigh, max)
 max_analyses_per_day = 50
 code_paths = "/home/yo/repos/backend"  # carpetas con el código local, separadas por coma: el análisis las lee (solo lectura)
 
@@ -152,9 +153,9 @@ environment = "prod"                   # los esquemas quedan en el conocimiento 
 skill = "acme-triage"                  # la skill que lo guía (vacío = sin skill)
 escalation = "ticket"                  # el resultado que pide una card (el análisis trae su título)
 escalation_label = "Ticket"
-reply_style = "en español, lista para pegar en el hilo"  # el análisis ya la pide corta (máx. 4 frases); esto fija idioma y tono
+reply_style = "en español, lista para pegar en el hilo"  # el análisis ya la pide corta (2 a 4 frases, o una lista si hay varias preguntas); esto fija idioma y tono
 investigation_skill = "acme-investigation"  # opcional: la skill de investigación (método y recetas) que también carga
-max_queries = 8                        # tope de consultas a las fuentes por análisis
+max_queries = 20                       # tope de consultas a las fuentes por análisis
 allowed_tools = ["mcp__claude_ai_Acme__search_docs"]  # tools extra de solo lectura (documentación); nombres exactos
 
 [slack.triage.outcomes]                # los resultados posibles y cómo se muestran
