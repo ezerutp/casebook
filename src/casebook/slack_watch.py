@@ -86,6 +86,7 @@ SECRET_FILES = (
     *(f"*{stem}*.{ext}" for stem in ("credentials", "secrets") for ext in ("sh", "json", "yml", "yaml", "properties",
                                                                             "txt", "ini", "toml")),
 )
+SKILL_NAME = re.compile(r"^[A-Za-z0-9][A-Za-z0-9_-]*$")  # el nombre de una skill, sin rutas
 READ_RULE = re.compile(r"^Read\((//.+)/\*\*\)$")
 POLL_TIMEOUT_S = 120
 ANALYSIS_TIMEOUT_S = 1200
@@ -180,11 +181,26 @@ def code_rules(paths: list[str]) -> tuple[str, ...]:
     return tuple(f"Read(/{path}/**)" for path in paths)
 
 
+def skill_rules(triage: Triage) -> tuple[str, ...]:
+    """La tool Skill carga el SKILL.md, pero sus recetas y archivos de referencia se leen con Read: sin estas reglas
+    quedan negados. Solo la carpeta de cada skill, la de ~/.claude/skills y su destino si es un enlace al pack. El
+    nombre viene del pack: uno con rutas (`../..`) o un enlace a una carpeta demasiado amplia no abre nada."""
+    rules: list[str] = []
+    for name in filter(None, (triage.skill, triage.investigation_skill)):
+        if not SKILL_NAME.match(name):
+            continue
+        link = Path.home() / ".claude" / "skills" / name
+        paths = tuple(dict.fromkeys((link, link.resolve())))
+        if not any(config.too_broad_to_read(path) for path in paths):  # leer por el enlace también llega al destino
+            rules += [f"Read(/{path}/**)" for path in paths]
+    return tuple(rules)
+
+
 def analysis_tools(triage: Triage, code_paths: list[str]) -> tuple[str, ...]:
     """Lo que puede usar el análisis: las tools de siempre, las de documentación que trae el pack (nunca algo que
-    esté negado) y la lectura de las carpetas de código."""
+    esté negado), la lectura de las skills del pack y la de las carpetas de código."""
     extra = tuple(t for t in triage.allowed_tools if t not in DENIED_TOOLS)
-    return ANALYSIS_TOOLS + extra + code_rules(code_paths)
+    return ANALYSIS_TOOLS + extra + skill_rules(triage) + code_rules(code_paths)
 
 
 def secret_denials(allowed: tuple[str, ...]) -> tuple[str, ...]:
@@ -523,41 +539,68 @@ def analysis_prompt(job: Job, channel_id: str, session_id: int, continues: bool 
                    "caso (la sesión ya está creada: no llames session_start, session_update ni knowledge_record "
                    "aunque la skill lo diga; aquí no se permiten). " if triage.investigation_skill else "")
     lines += [
-        f"1. Lee el hilo completo con {SLACK}slack_read_thread (channel_id={channel_id}, message_ts={job.thread_ts}).",
+        f"1. Lee el hilo completo con {SLACK}slack_read_thread (channel_id={channel_id}, message_ts={job.thread_ts}). "
+        "Si trae varias preguntas, sepáralas: hay que contestarlas todas. Si alguien ya respondió (una persona o un "
+        "bot), verifica esa respuesta con evidencia y di si es correcta, está incompleta o está equivocada; no la "
+        "repitas.",
         f"2. Adjuntos: lee con {SLACK}slack_read_file TODOS los archivos adjuntos del hilo (del mensaje principal y "
         "de las respuestas), sobre todo imágenes y capturas: suelen tener el dato clave (IDs, errores, números). "
         + (f"Este mensaje trae: {files}. " if files else "")
         + "En attachments_reviewed va cada uno que leíste con su file_id y qué muestra, y úsalos en el análisis. "
-        "Si alguno no se puede leer, dilo en su description.",
+        "Si alguno no se puede leer, dilo en su description. Los videos (Loom, Fathom y similares) no los puedes "
+        "ver: dilo en missing_data y trabaja con el texto y las capturas.",
         f"3. {method} elige el resultado (outcome) entre: {options}.",
         "4. Investiga antes de concluir: " + investigate
         + ("" if continues else f"Llama a session_resume con session_id={session_id} (para que las consultas "
                                 "queden en el visor). ")
-        + "Empieza por knowledge_search (esquemas e índices ya verificados) y consulta las fuentes con los datos "
-        f"concretos del caso (IDs, emails, fechas del hilo y de las capturas): hasta {triage.max_queries} consultas, "
-        "siempre acotadas (os_count antes de os_search, db_select con LIMIT, cw_estimate antes de cw_query)."
-        + _environments(environments) + " Cada "
-        "hallazgo lo confirmas o descartas con otra consulta; no te quedes con la primera hipótesis. Si es una "
-        "pregunta de lógica del producto y no hace falta evidencia de las fuentes, no consultes. Busca con "
-        f"{ATLASSIAN}searchJiraIssuesUsingJql (solo lectura) si ya hay una card con el mismo síntoma y anótala en "
-        "similar_cards; si Jira no está disponible, sigue sin eso." + reading(triage, code_paths)
-        + " Si una fuente falla (sesión vencida, túnel), no insistas: dilo en missing_data y concluye con lo que "
-        "tengas.",
+        + "Empieza por knowledge_search: los esquemas, índices y relaciones ya verificados están ahí; no repitas "
+        "con db_tables, os_indices u os_mapping lo que ya está. Antes de pedir un dato, búscalo tú: con lo que trae "
+        "el hilo o las capturas (un email, el nombre de la cuenta, un dominio, IDs, fechas) ubica la cuenta y los "
+        "registros del caso en las fuentes y mira lo que importa para la pregunta (configuración, leads, clicks, "
+        f"ventas, logs). Tienes hasta {triage.max_queries} consultas, siempre acotadas (os_count antes de os_search, "
+        "db_select con LIMIT, cw_estimate antes de cw_query); úsalas: un análisis que no consultó nada solo vale si "
+        "la pregunta no depende de los datos de una cuenta." + _environments(environments) + " Cada "
+        "hallazgo lo confirmas o descartas con otra consulta; no te quedes con la primera hipótesis. Si "
+        "preguntan cómo funciona algo o si algo se puede hacer, la respuesta sale de la documentación o del "
+        "código: ábrelos y léelos, no lo supongas. Busca con "
+        f"{ATLASSIAN}searchJiraIssuesUsingJql (solo lectura) si ya hay una card con el mismo síntoma, abierta o "
+        "resuelta hace poco (un fix reciente puede explicar el caso), y anótala en similar_cards; si Jira no está "
+        f"disponible, sigue sin eso. Busca también con {SLACK}slack_search_public en el canal (in:<#{channel_id}>, "
+        "últimos 14 días) si otros reportaron el mismo síntoma: varios casos iguales en pocos días suelen ser un "
+        "problema general." + reading(triage, code_paths)
+        + " Si una fuente falla (sesión vencida, túnel), no insistas: dilo en missing_data y sigue con las demás.",
         "5. Decide el resultado con la evidencia, no con la primera impresión: "
-        f"{triage.escalation} solo si lo investigado apunta a un fallo que una explicación no resuelve; si ya hay una "
-        "card igual, no pidas otra: di cuál en similar_cards. Si falta un dato que impide concluir, pídelo en una "
-        "sola pregunta concreta. Cada afirmación de evidence cita su query_id; lo que no pudiste comprobar va como "
-        "hipótesis y baja la confidence.",
-        f"6. Devuelve el resultado en el formato pedido. card solo si outcome={triage.escalation}: título y qué "
+        f"{triage.escalation} si lo investigado apunta a un fallo que una explicación no resuelve, o si después de "
+        "investigar la causa o la respuesta siguen sin estar claras y hace falta ir más a fondo (logs del backend, "
+        "código o datos que no alcanzaste): entonces sugiere crear la card con lo que encontraste y lo que falta "
+        "revisar, en vez de dar una conclusión dudosa. Si ya hay una card igual, no pidas otra: di cuál en "
+        "similar_cards. Pide un dato solo si lo buscaste y no está ni en las "
+        "fuentes ni en el hilo: una sola pregunta concreta, y en missing_data qué buscaste y dónde. Cada afirmación "
+        "de evidence cita su query_id (o su ref); lo que no pudiste comprobar va como hipótesis y baja la "
+        "confidence. No concluyas que algo es esperado si en la cuenta del caso hay un cambio reciente que no "
+        "explicaste (antes funcionaba y ahora no): una tasa general de todas las cuentas no descarta un cambio en "
+        "esta. Dilo como hallazgo abierto, baja la confidence, no afirmes en la respuesta que no hay problema y "
+        f"sugiere escalar ({triage.escalation}) para investigarlo.",
+        "6. Antes de devolver, revisa tu análisis como lo haría quien atiende el canal: ¿encontraste en las fuentes "
+        "la cuenta y los registros que nombra el hilo, y miraste lo que importa para la pregunta? ¿Leíste la "
+        "documentación o el código de lo que preguntan, en vez de suponerlo? ¿Cada afirmación de summary e "
+        "hypothesis tiene su evidence? ¿Contestaste exactamente lo que preguntó, y todas sus preguntas? Si alguna "
+        "respuesta es no y "
+        "todavía puedes resolverla con una consulta o una lectura más, hazla antes de devolver: este análisis "
+        "tiene que servir a la primera, nadie va a pedirte que profundices. Una confidence low o un resultado que "
+        "pide información solo valen si lo intentaste y quedó bloqueado.",
+        f"7. Devuelve el resultado en el formato pedido. card solo si outcome={triage.escalation}: título y qué "
         "debe llevar.",
-        f"7. suggested_reply va {triage.reply_style}. Es lo que quien atiende el canal pega en el hilo para "
+        f"8. suggested_reply va {triage.reply_style}. Es lo que quien atiende el canal pega en el hilo para "
         f"contestarle a {job.user_name}, no un informe: "
-        "corta, precisa y al grano (máximo 4 frases, unas 60 palabras), informal y sin relleno, sin viñetas ni "
-        "encabezados ni detalles de programador (clases, tablas, trazas, rutas de archivos): explica en términos del "
-        "producto. La primera frase contesta lo que preguntó; después, solo el dato clave que la sostiene (el "
-        "motivo, un ID, una fecha) y el siguiente paso. Tiene que ser coherente con su mensaje: usa sus términos, no "
-        "le pidas lo que ya dio (en el texto o en las capturas), no le sugieras lo que dijo haber probado y no "
-        "contradigas lo que afirmó sin decir por qué. No expliques tu método ni cites query_id ahí.",
+        "corta, precisa y al grano, informal y sin relleno, sin encabezados ni detalles de programador (clases, "
+        "tablas, trazas, rutas de archivos): explica en términos del producto. Si preguntó una sola cosa, 2 a 4 "
+        "frases (unas 60 palabras): la primera contesta lo que preguntó; después, solo el dato clave que la sostiene "
+        "(el motivo, un ID, una fecha) y el siguiente paso. Si preguntó varias, contéstalas todas en una lista "
+        "numerada en el mismo orden, una o dos líneas cada una; si una todavía no tiene respuesta, dilo en su punto. "
+        "Tiene que ser coherente con su mensaje: usa sus términos, no le pidas lo que ya dio (en el texto o en las "
+        "capturas), no le sugieras lo que dijo haber probado y no contradigas lo que afirmó sin decir por qué. No "
+        "expliques tu método ni cites query_id ahí.",
         "Si no puedes leer Slack, devuelve `error` (code \"connector\", \"channel\" u \"other\" y una frase en detail) "
         "en vez de inventar un análisis.",
     ]
@@ -605,14 +648,18 @@ class ClaudeError(Exception):
 
 
 def run_claude(prompt: str, model: str, schema: dict[str, Any], allowed: tuple[str, ...], timeout: int,
-               proc_holder: Callable[[subprocess.Popen | None], None] | None = None) -> dict[str, Any]:
-    """Corre `claude -p` con salida estructurada y devuelve structured_output."""
+               proc_holder: Callable[[subprocess.Popen | None], None] | None = None,
+               effort: str | None = None) -> dict[str, Any]:
+    """Corre `claude -p` con salida estructurada y devuelve structured_output. effort: el --effort (None = el de
+    fábrica de Claude Code)."""
     WORK_DIR.mkdir(parents=True, exist_ok=True)
     # dontAsk: lo que no está en --allowedTools se niega sin preguntar, aunque la config del usuario tenga otro modo.
     denied = DENIED_TOOLS + secret_denials(allowed)
     command = ["claude", "-p", prompt, "--model", model, "--output-format", "json",
                "--json-schema", json.dumps(schema), "--no-session-persistence", "--permission-mode", "dontAsk",
                "--allowedTools", ",".join(allowed), "--disallowedTools", ",".join(denied)]
+    if effort:
+        command += ["--effort", effort]
     try:
         proc = subprocess.Popen(command, cwd=WORK_DIR, stdin=subprocess.DEVNULL, stdout=subprocess.PIPE,
                                 stderr=subprocess.PIPE, text=True, start_new_session=True)
@@ -806,13 +853,14 @@ class SlackWatcher:
         self._update(apply)
 
     def _call(self, prompt: str, model: str, schema: dict[str, Any], allowed: tuple[str, ...],
-              timeout: int) -> dict[str, Any]:
+              timeout: int, effort: str | None = None) -> dict[str, Any]:
         """`claude -p` con el diagnóstico del conector: si el modelo no encontró Slack se pregunta a `claude mcp get`
         (sin tokens). Conectado → un reintento (a veces tarda en cargar); sin autorizar o ausente → ese error."""
         current: list = []
         for attempt in (1, 2):
             try:
-                return self.runner(prompt, model, schema, allowed, timeout, lambda p: self._hold(p, current))
+                return self.runner(prompt, model, schema, allowed, timeout, lambda p: self._hold(p, current),
+                                   effort=effort)
             except ClaudeError as exc:
                 if exc.code not in ("connector", "other") or self._stop.is_set():
                     raise
@@ -1175,7 +1223,8 @@ class SlackWatcher:
             result = self._call(analysis_prompt(job, self.cfg.slack_channel_id, session["id"], continues,
                                                 self.cfg.slack_triage, code_paths, config.ambiguous_envs(self.cfg)),
                                 self.cfg.slack_analysis_model, analysis_schema(self.cfg.slack_triage),
-                                analysis_tools(self.cfg.slack_triage, code_paths), ANALYSIS_TIMEOUT_S)
+                                analysis_tools(self.cfg.slack_triage, code_paths), ANALYSIS_TIMEOUT_S,
+                                effort=self.cfg.slack_analysis_effort)
         except ClaudeError as exc:
             info = error_info("interrupted" if self._stop.is_set() else exc.code, str(exc))
             if info["code"] in ("other", "timeout"):  # lo automático no repite un análisis: se reintenta a mano

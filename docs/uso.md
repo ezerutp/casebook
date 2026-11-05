@@ -53,7 +53,8 @@ lo trae el pack, y los demás ajustes están en **Ajustes → Slack**). Mientras
   la **revisión de respaldo** (`slack.backup_poll_minutes`, apagada por defecto), que lee el canal cada tantos
   minutos y sí gasta uso de tu suscripción en cada revisión.
 - Cada pedido nuevo (no los avisos, agradecimientos ni mensajes de bots) se analiza con `slack.analysis_model`
-  (Sonnet) y las skills de triage e investigación del pack (`[slack.triage]`): lee el hilo y las imágenes,
+  (Sonnet), `slack.analysis_effort` (alto) y las skills de triage e investigación del pack (`[slack.triage]`): lee
+  el hilo y las imágenes,
   investiga en las fuentes (hasta `max_queries` consultas acotadas) y busca en Jira si ya hay una card con el mismo
   síntoma; si configuras `slack.code_paths`, también lee el código local (solo lectura) y la documentación que
   indique el pack. Deja una sesión **Slack · autor · hora** con el resultado (los que define el pack: respuesta directa,
