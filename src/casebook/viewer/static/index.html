@@ -107,7 +107,8 @@
           <h2>Borrador para <span class="draft-card"></span></h2>
           <p class="sum-draft-text"></p>
           <div class="sum-actions">
-            <button class="copy-draft"><span class="btn-icon" data-icon="copy" aria-hidden="true"></span><span>Copiar</span></button>
+            <button class="copy-draft" data-target="jira" title="Copiar con formato para pegar en un comentario de Jira"><span class="btn-icon" data-icon="copy" aria-hidden="true"></span><span>Jira</span></button>
+            <button class="copy-draft" data-target="slack" title="Copiar con formato para pegar en Slack"><span class="btn-icon" data-icon="copy" aria-hidden="true"></span><span>Slack</span></button>
             <button class="ghost see-draft">Ver completo</button>
           </div>
         </section>
@@ -305,7 +306,8 @@
         <span class="purpose">Borrador para <span class="draft-card"></span></span>
         <span class="meta">no publicado</span>
         <button class="draft-history" hidden aria-haspopup="dialog">Editado</button>
-        <button class="copy-draft"><span class="btn-icon" data-icon="copy" aria-hidden="true"></span><span>Copiar</span></button>
+        <button class="copy-draft" data-target="jira" title="Copiar con formato para pegar en un comentario de Jira"><span class="btn-icon" data-icon="copy" aria-hidden="true"></span><span>Jira</span></button>
+        <button class="copy-draft" data-target="slack" title="Copiar con formato para pegar en Slack"><span class="btn-icon" data-icon="copy" aria-hidden="true"></span><span>Slack</span></button>
         <time></time>
       </div>
       <p class="note-text"></p>
@@ -323,6 +325,7 @@
     </li>
   </template>
 
+  <script src="/static/rich-copy.js"></script>
   <script src="/static/app.js"></script>
   <script src="/static/settings.js"></script>
   <script src="/static/skills.js"></script>

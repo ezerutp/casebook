@@ -893,11 +893,15 @@ function renderSummary() {
   box.hidden = notes.hidden && draft.hidden && sources.hidden;
 }
 
-$("#sum-draft .copy-draft").addEventListener("click", async (e) => {
-  if (!state.draft) return;
-  await navigator.clipboard.writeText(state.draft.text);
-  flash(e.currentTarget, "Copiado");
-});
+// El borrador está en markdown: Jira y Slack lo necesitan con formato (HTML) para no mostrar los ** literales.
+async function copyDraft(button, text) {
+  await (button.dataset.target === "slack" ? richCopy.forSlack(text) : richCopy.forJira(text));
+  flash(button, "Copiado");
+}
+
+document.querySelectorAll("#sum-draft .copy-draft").forEach((button) =>
+  button.addEventListener("click", (e) => state.draft && copyDraft(e.currentTarget, state.draft.text))
+);
 $("#sum-draft .see-draft").addEventListener("click", () => state.draft && focusCard(state.draft.key));
 
 // --- eventos ---------------------------------------------------------------------------------------------
@@ -975,11 +979,9 @@ function applyEvent(ev, live = true) {
         $(".draft-card", el).textContent = card;
         draft = { el, key: el.dataset.key, card, versions: [], text: "" };
         state.drafts.set(card, draft);
-        $(".copy-draft", el).addEventListener("click", async (e) => {
-          const button = e.currentTarget;
-          await navigator.clipboard.writeText(draft.text);
-          flash(button, "Copiado");
-        });
+        el.querySelectorAll(".copy-draft").forEach((button) =>
+          button.addEventListener("click", (e) => copyDraft(e.currentTarget, draft.text))
+        );
         $(".draft-history", el).addEventListener("click", () => openDraftHistory(draft));
         add(el);
       }
