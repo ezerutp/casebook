@@ -38,7 +38,8 @@ const skillsView = (() => {
     const badge = $("#skills-badge");
     badge.hidden = !bad;
     badge.textContent = bad;
-    badge.title = bad ? `${bad} skill${bad > 1 ? "s" : ""} del repo sin instalar bien` : "";
+    badge.dataset.tipPlace = "right";
+    badge.dataset.tip = bad ? `${bad} skill${bad > 1 ? "s" : ""} del repo sin instalar bien` : "";
   }
 
   async function show() {

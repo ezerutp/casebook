@@ -24,10 +24,14 @@ const knowledgeView = (() => {
   const previous = document.querySelector("#knowledge-prev");
   const next = document.querySelector("#knowledge-next");
   const pageLabel = document.querySelector("#knowledge-page");
-  const pageSize = 5;
+  const pageSize = 20;
   let pageOffset = 0;
   let appliedFilters = new URLSearchParams(new FormData(filters));
   const labels = {verified: "Verificado", pending: "Por verificar", stale: "Desactualizado"};
+  const tones = {verified: "ok", pending: "warn", stale: "fail"};
+  const sourceIcons = {mysql: "db", opensearch: "os", cloudwatch: "cw", code: "terminal"};
+  const sourceNames = {mysql: "MySQL", opensearch: "OpenSearch", cloudwatch: "CloudWatch", code: "Código"};
+  function stateTag(status) { return el("span", labels[status] || status, `state-tag ${tones[status] || "none"}`); }
   const kinds = {schema: "Columnas e índices", catalog: "Tablas observadas", mapping: "Campos del índice",
     relation: "Relación", query: "Consulta de ejemplo", reference: "Referencia", limitation: "Limitación"};
   function readable(content) {
@@ -83,19 +87,37 @@ const knowledgeView = (() => {
       nextOffset = data.next_offset;
       list.replaceChildren();
       document.querySelector("#knowledge-count").textContent = data.total
-        ? `${offset + 1}–${offset + data.entries.length} de ${data.total} entradas`
-        : "0 entradas";
-      pageLabel.textContent = `Página ${Math.floor(offset / pageSize) + 1} de ${Math.max(1, Math.ceil(data.total / pageSize))}`;
+        ? `${data.total} entrada${data.total > 1 ? "s" : ""}`
+        : "Sin entradas";
+      const pages = Math.max(1, Math.ceil(data.total / pageSize));
+      pageLabel.textContent = `${Math.floor(offset / pageSize) + 1} / ${pages}`;
+      pageLabel.closest("nav").hidden = pages < 2;
       for (const item of data.entries) {
-        const a = el("a", "", "knowledge-item");
+        // Mismo diseño que la lista de Skills: ícono de la fuente, título, estado; resumen; fuente y fecha.
+        const a = el("a", "", "skill-item knowledge-item");
         a.href = `#/knowledge/${item.id}`;
         if (item.id === selectedId) a.setAttribute("aria-current", "true");
-        a.append(el("strong", item.title), el("span", `${item.source} · ${item.environment}`),
-          el("span", labels[item.status], `knowledge-status ${item.status}`),
-          el("span", ["schema", "catalog", "mapping"].includes(item.kind) ? kinds[item.kind] : item.summary, "knowledge-snippet"), el("small", `Verificación: ${date(item.verified_at)}`));
+        const top = el("span", "", "skill-top");
+        const icon = el("span", "", "btn-icon");
+        icon.setAttribute("aria-hidden", "true");
+        icon.innerHTML = ICONS[sourceIcons[item.source]] || ICONS.db;
+        top.append(icon, el("span", item.title, "skill-name"), stateTag(item.status));
+        const desc = ["schema", "catalog", "mapping"].includes(item.kind) ? kinds[item.kind] : item.summary;
+        a.append(top, el("span", desc || "Sin resumen.", "skill-desc"),
+          el("span", `${sourceNames[item.source] || item.source} · ${item.environment} · ${item.verified_at ? `verificado ${relTime(item.verified_at)}` : "sin verificar"}`, "skill-meta"));
+        a.querySelector(".skill-name").dataset.tip = item.title;
         list.append(a);
       }
       if (!data.total) list.append(el("p", "No hay coincidencias. Puedes importar los esquemas guardados en tus sesiones o capturarlos en próximas consultas.", "empty"));
+      // La entrada abierta debe verse en la lista lateral, como en Skills.
+      // Solo se mueve la lista lateral y solo si la entrada quedó fuera de vista (no tapa los filtros).
+      const current = list.querySelector("[aria-current]");
+      const side = list.closest(".knowledge-side");
+      if (current && side && side.scrollHeight > side.clientHeight) {
+        const c = current.getBoundingClientRect(), box = side.getBoundingClientRect();
+        if (c.top < box.top) side.scrollTop -= box.top - c.top + 8;
+        else if (c.bottom > box.bottom) side.scrollTop += c.bottom - box.bottom + 8;
+      }
     } finally {
       if (ticket === listingGeneration) {
         previous.disabled = pageOffset === 0;
@@ -205,7 +227,10 @@ const knowledgeView = (() => {
       if (!id) { detail.replaceChildren(el("p", "Selecciona una entrada para ver su contenido y evidencia.", "empty")); return; }
       const item = await request(`/api/knowledge/${id}`);
       if (ticket !== generation) return;
-      const heading = el("h2", item.title);
+      const header = el("header", "", "skill-header");
+      const title = el("div", "", "skill-title");
+      title.append(el("h2", item.title), stateTag(item.status));
+      header.append(title, el("p", `${kinds[item.kind] || item.kind} · revisión ${item.revision}`, "skill-state-text"));
       const edit = button("Corregir o marcar desactualizada", "note"); edit.onclick = () => editForm(item);
       const remove = button("Eliminar entrada", "trash", "danger");
       remove.onclick = async () => {
@@ -220,14 +245,21 @@ const knowledgeView = (() => {
           message.textContent = "Entrada eliminada.";
         } catch(e) { fail(e); remove.disabled = false; }
       };
-      const actions = el("div", "", "knowledge-actions");
+      const actions = el("div", "", "skill-actions");
       actions.append(edit, remove);
-      detail.replaceChildren(heading,
-        el("p", `${item.source} · ${item.environment} · ${kinds[item.kind] || item.kind} · ${labels[item.status]}`),
-        el("p", `Entidad: ${item.entity}`), el("p", `Temas: ${item.topics.join(", ") || "Sin etiquetas"}`),
-        el("p", `Última verificación: ${date(item.verified_at)} · Revisión ${item.revision}`),
+      header.append(actions);
+      const meta = el("dl", "", "skill-meta-list");
+      for (const [label, value, mono] of [
+        ["Fuente", sourceNames[item.source] || item.source], ["Entorno", item.environment, true],
+        ["Entidad", item.entity, true], ["Temas", item.topics.join(", ") || "Sin etiquetas"],
+        ["Última verificación", date(item.verified_at)]]) {
+        meta.append(el("dt", label), el("dd", value, mono ? "mono" : ""));
+      }
+      const content = el("section", "", "knowledge-section");
+      content.append(el("h3", "Contenido"), el("pre", readable(item.content), "knowledge-content"));
+      detail.replaceChildren(header, meta,
         el("p", "Verificado confirma la observación del esquema en esa fecha, no su vigencia actual ni hechos de un cliente.", "knowledge-note"),
-        actions, el("pre", readable(item.content), "knowledge-content"), evidenceView(item.evidence));
+        content, evidenceView(item.evidence));
       const history = el("section", "", "knowledge-history");
       history.append(el("h3", "Historial de cambios"));
       item.history.forEach(h => history.append(historyItem(h)));
@@ -245,11 +277,18 @@ const knowledgeView = (() => {
       history.append(older); detail.append(history);
     } catch(e) { fail(e); if (!editing) detail.replaceChildren(el("p", e.message, "empty")); }
   }
-  filters.onsubmit = e => {
-    e.preventDefault();
-    appliedFilters = new URLSearchParams(new FormData(filters));
+  // Los filtros se aplican mientras se escribe (como en Skills); Enter los aplica al instante.
+  let filterTimer = null;
+  function applyFilters() {
+    clearTimeout(filterTimer);
+    const nextFilters = new URLSearchParams(new FormData(filters));
+    if (nextFilters.toString() === appliedFilters.toString()) return;
+    appliedFilters = nextFilters;
     load(0).catch(fail);
-  };
+  }
+  filters.onsubmit = e => { e.preventDefault(); applyFilters(); };
+  filters.addEventListener("input", () => { clearTimeout(filterTimer); filterTimer = setTimeout(applyFilters, 250); });
+  filters.addEventListener("change", applyFilters);
   previous.onclick = () => load(Math.max(0, pageOffset - pageSize)).catch(fail);
   next.onclick = () => { if (nextOffset !== null) load(nextOffset).catch(fail); };
   document.querySelector("#knowledge-reload").onclick = () => {
