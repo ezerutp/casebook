@@ -1,8 +1,10 @@
 // Botón flotante «Ir arriba». Aparece cuando ya se bajó bastante. Se puede arrastrar: al soltarlo se pega al
 // borde (izquierdo del contenido o derecho de la ventana) más cercano y recuerda la altura en este navegador,
-// para que el ingeniero lo deje donde no tape nada.
+// para que el ingeniero lo deje donde no tape nada. Hasta que se arrastra por primera vez, al aparecer hace una
+// pista de que se puede mover: se balancea y muestra flechitas arriba y abajo.
 (() => {
   const KEY = "casebook.scrollTop";
+  const DRAGGED_KEY = "casebook.scrollTop.dragged";
   const MARGIN = 16;
   const DRAG_THRESHOLD = 5;
   const reduceMotion = window.matchMedia("(prefers-reduced-motion: reduce)");
@@ -14,7 +16,8 @@
   btn.dataset.tipPlace = "left";
   btn.setAttribute("aria-label", "Ir arriba");
   btn.innerHTML =
-    '<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M12 19V5M6 11l6-6 6 6"/></svg>';
+    '<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.4" stroke-linecap="round" stroke-linejoin="round"><path d="M12 19V5M6 11l6-6 6 6"/></svg>'
+    + '<span class="scroll-top-grip up" aria-hidden="true"></span><span class="scroll-top-grip down" aria-hidden="true"></span>';
   document.body.appendChild(btn);
 
   // Posición guardada: lado y altura como fracción de la ventana, para que sobreviva a cambios de tamaño.
@@ -38,9 +41,20 @@
     btn.style.top = `${top}px`;
   }
 
+  let dragged = false;
+  try { dragged = localStorage.getItem(DRAGGED_KEY) === "1"; } catch {}
+  let hinted = false; // la pista sale una vez por carga de página, y nunca más después del primer arrastre
+
   function updateVisibility() {
-    btn.classList.toggle("visible", window.scrollY > window.innerHeight * 0.6);
+    const show = window.scrollY > window.innerHeight * 0.6;
+    const appearing = show && !btn.classList.contains("visible");
+    btn.classList.toggle("visible", show);
+    if (appearing && !dragged && !hinted && !reduceMotion.matches) {
+      hinted = true;
+      btn.classList.add("hint");
+    }
   }
+  btn.addEventListener("animationend", (e) => { if (e.target === btn) btn.classList.remove("hint"); });
 
   // Arrastre con pointer events: si se mueve menos que el umbral, cuenta como clic.
   let drag = null;
@@ -55,6 +69,7 @@
     if (!drag || e.pointerId !== drag.id) return;
     if (!drag.moved && Math.hypot(e.clientX - drag.x, e.clientY - drag.y) < DRAG_THRESHOLD) return;
     drag.moved = true;
+    btn.classList.remove("hint");
     btn.classList.add("dragging");
     const size = btn.offsetWidth;
     const left = Math.min(window.innerWidth - size, Math.max(0, e.clientX - drag.dx));
@@ -76,7 +91,11 @@
     const maxY = window.innerHeight - r.height - MARGIN;
     const y = maxY > MARGIN ? Math.min(1, Math.max(0, (r.top - MARGIN) / (maxY - MARGIN))) : 1;
     pos = { side, y };
-    try { localStorage.setItem(KEY, JSON.stringify(pos)); } catch {}
+    dragged = true;
+    try {
+      localStorage.setItem(KEY, JSON.stringify(pos));
+      localStorage.setItem(DRAGGED_KEY, "1");
+    } catch {}
     place();
     btn.dataset.justDragged = "1";
   }
