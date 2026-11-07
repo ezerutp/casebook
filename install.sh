@@ -6,11 +6,14 @@
 # requisitos, la extensión de Chrome, Slack (opcional) y las sesiones. Se puede repetir después con `casebook setup`.
 #
 #   ./install.sh               instala o actualiza una copia propia en ~/.local/share/casebook/venv;
-#                              después el repo se puede mover o borrar. Para actualizar: git pull && ./install.sh
+#                              después el repo se puede mover o borrar. Para actualizar: casebook update (main)
+#                              o casebook update-dev (tu copia de trabajo)
 #   ./install.sh --dev         modo desarrollo: editable desde este repo (tus cambios aplican sin reinstalar)
 #   ./install.sh --local       instalación local, sin preguntar (sin --dev ni --local, se elige en un menú)
 #   ./install.sh --gui         el asistente gráfico, sin preguntar (descarga PySide6 la primera vez, ~110 MB)
 #   ./install.sh --consola     el asistente en la terminal, sin preguntar
+#   ./install.sh --setup       abre el asistente al terminar, sin preguntar (al reinstalar, por defecto se pregunta)
+#   ./install.sh --no-setup    solo instala el paquete; el asistente queda para después (casebook setup)
 #   ./install.sh --agents=claude,codex,opencode
 #                              en qué agentes registrar el MCP y las skills, sin preguntar
 #   ./install.sh --skip-mcp    sin registrar el servidor MCP en los agentes
@@ -112,18 +115,21 @@ choose() {  # choose <índice por defecto> "opción|detalle" ...
 }
 
 DEV=0; MODE_SET=0; UNINSTALL=0; PREVIEW=0; FORCE=0
+SETUP=ask  # ask: en una reinstalación se pregunta si abrir el asistente; yes/no con --setup/--no-setup
 SETUP_ARGS=()
 for arg in "$@"; do
     case "$arg" in
         --dev) DEV=1; MODE_SET=1 ;;
         --local) DEV=0; MODE_SET=1 ;;
-        --gui|--consola|--skip-mcp|--skip-skill|--no-login) SETUP_ARGS+=("$arg") ;;
-        --agents=*) SETUP_ARGS+=(--agents "${arg#--agents=}") ;;
+        --gui|--consola|--skip-mcp|--skip-skill|--no-login) SETUP_ARGS+=("$arg"); SETUP=yes ;;
+        --agents=*) SETUP_ARGS+=(--agents "${arg#--agents=}"); SETUP=yes ;;
+        --setup) SETUP=yes ;;
+        --no-setup) SETUP=no ;;
         --browser) : ;;  # compatibilidad: el login siempre usa Chrome
         --preview) PREVIEW=1 ;;
         --uninstall) UNINSTALL=1 ;;
         --force) FORCE=1 ;;
-        -h|--help) sed -n '2,25p' "$0" | sed 's/^# \{0,1\}//'; exit 0 ;;
+        -h|--help) awk 'NR > 1 && !/^#/ { exit } NR > 1 { sub(/^# ?/, ""); print }' "$0"; exit 0 ;;
         *) die "opción desconocida: $arg (usa --help)" ;;
     esac
 done
@@ -318,6 +324,11 @@ done
 ok "$("$PY" --version) ($PY)"
 
 # --- entorno y paquete ---------------------------------------------------------------------------------------
+# Una reinstalación (ya hay comando e install-info del mismo modo) no necesita el asistente: solo se ofrece.
+PREV_MODE="$(sed -n 's/^mode=//p' "$INFO_FILE" 2>/dev/null || true)"
+NEW_MODE="$([[ $DEV -eq 1 ]] && echo dev || echo copia)"
+REINSTALL=0
+if [[ -n "$PREV_MODE" && "$PREV_MODE" == "$NEW_MODE" && -e "$CLI_LINK" ]]; then REINSTALL=1; fi
 step "Paquete"
 if [[ ! -x "$VENV/bin/python" ]]; then
     mkdir -p "$(dirname "$VENV")"
@@ -364,6 +375,37 @@ if [[ -f "$APP_DIR/packs/active" ]]; then
 fi
 
 # --- asistente -----------------------------------------------------------------------------------------------
-# El resto (comando, agentes, requisitos, extensión, sesiones) lo hace el asistente, gráfico o de terminal.
+# El resto (comando, agentes, requisitos, extensión, sesiones) lo hace el asistente, gráfico o de terminal. La
+# primera vez (o al cambiar de modo) es necesario; al reinstalar, casebook ya está configurado y solo se ofrece.
+VERSION="$("$VENV/bin/python" -c 'from importlib.metadata import version; print(version("casebook"))')"
+if [[ $REINSTALL -eq 1 && $SETUP != yes ]]; then
+    step "Listo"
+    ok "casebook $VERSION instalado; tu configuración, agentes y sesiones siguen igual"
+    if [[ $SETUP == ask && -t 0 && -t 1 ]] && ( : </dev/tty ) 2>/dev/null; then
+        printf '\n  %s?%s %s¿Abro el asistente de configuración?%s %s(↑/↓ y Enter)%s\n' "$C" "$N" "$B" "$N" "$D" "$N"
+        choose 0 \
+            "Terminar aquí|casebook ya quedó actualizado" \
+            "Abrir el asistente|nuevos entornos o fuentes, agentes, pack, extensión de Chrome o sesiones"
+        [[ $CHOICE -eq 1 ]] && SETUP=yes
+    fi
+    if [[ $SETUP != yes ]]; then
+        printf '\n    %sPara configurar después:%s casebook setup\n' "$D" "$N"
+        printf '    %sPara actualizar la próxima vez:%s casebook update %s(main)%s · casebook update-dev %s(tu copia de trabajo)%s\n' \
+            "$D" "$N" "$D" "$N" "$D" "$N"
+        printf '    %sSi Claude Code está abierto, reinícialo (o /mcp → reconectar casebook) para usar esta versión.%s\n\n' "$D" "$N"
+        exit 0
+    fi
+elif [[ $SETUP == no ]]; then
+    step "Listo"
+    ok "casebook $VERSION instalado"
+    printf '\n    %sFalta configurarlo (comando, agentes, extensión):%s %s -m casebook.setup %s\n\n' \
+        "$Y" "$N" "$VENV/bin/python" "${MODE_ARGS[*]}"
+    exit 0
+else
+    step "Configuración"
+    if [[ $REINSTALL -eq 1 ]]; then ok "casebook $VERSION instalado; abro el asistente"
+    elif [[ -n "$PREV_MODE" && "$PREV_MODE" != "$NEW_MODE" ]]; then ok "casebook $VERSION instalado; cambiaste de modo: el asistente vuelve a registrar los agentes"
+    else ok "casebook $VERSION instalado; ahora el asistente lo deja listo (comando, agentes, extensión, sesiones)"; fi
+fi
 export CASEBOOK_FROM_INSTALLER=1  # el asistente no repite la cabecera
 exec "$VENV/bin/python" -m casebook.setup "${MODE_ARGS[@]}" ${SETUP_ARGS[@]+"${SETUP_ARGS[@]}"}

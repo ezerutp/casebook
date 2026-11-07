@@ -1,4 +1,4 @@
-"""CLI: casebook {mcp, viewer, stop, login, logout, extension, setup, doctor, export, demo}."""
+"""CLI: casebook {mcp, viewer, stop, login, logout, extension, setup, update, update-dev, doctor, export, demo}."""
 
 from __future__ import annotations
 
@@ -532,6 +532,17 @@ def cmd_extension(args: argparse.Namespace) -> int:
     return 0
 
 
+def cmd_update(args: argparse.Namespace) -> int:
+    """Actualiza la instalación local: desde main del remoto (update) o desde tu copia de trabajo (update-dev)."""
+    from . import update
+
+    try:
+        return update.run(dev=args.cmd == "update-dev")
+    except update.UpdateError as exc:
+        print(f"error: {exc}", file=sys.stderr)
+        return 1
+
+
 def cmd_setup(args: argparse.Namespace) -> int:
     """Vuelve a abrir el asistente de instalación con los datos de la última instalación."""
     from . import native_host
@@ -692,6 +703,13 @@ def main(argv: list[str] | None = None) -> int:
     p.add_argument("--name", help="init/export: el nombre del pack")
     p.add_argument("--version", default="0.1.0", help="export: la versión del pack")
     p.set_defaults(func=cmd_pack)
+
+    sub.add_parser(
+        "update", help="actualiza la instalación local con main del repo (git fetch; no toca tu rama ni tus cambios)"
+    ).set_defaults(func=cmd_update)
+    sub.add_parser(
+        "update-dev", help="actualiza la instalación local con tu copia de trabajo del repo, cambios sin commit incluidos"
+    ).set_defaults(func=cmd_update)
 
     p = sub.add_parser("source", help="las fuentes (OpenSearch, CloudWatch, MySQL): ver, agregar, probar, quitar",
                        description="list · add [opensearch|cloudwatch|mysql] (pregunta los campos del proveedor) · "
