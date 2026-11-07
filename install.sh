@@ -1,9 +1,10 @@
 #!/usr/bin/env bash
 # Instala casebook para el usuario actual (sin sudo). Se puede correr de nuevo: es idempotente.
 #
-# Este script prepara lo mínimo (Python, el venv y el paquete) y después abre el asistente: gráfico (una
-# ventana con los pasos) o en la terminal, a elección. El asistente registra el comando, los agentes, revisa los
-# requisitos, la extensión de Chrome, Slack (opcional) y las sesiones. Se puede repetir después con `casebook setup`.
+# Este script instala lo mínimo (Python, el venv, el paquete y el comando casebook en ~/.local/bin) y después abre
+# el asistente: gráfico (una ventana con los pasos) o en la terminal, a elección. El asistente registra los agentes,
+# revisa los requisitos, la extensión de Chrome, Slack (opcional) y las sesiones. Al reinstalar, solo se ofrece; se
+# puede repetir después con `casebook setup`.
 #
 #   ./install.sh               instala o actualiza una copia propia en ~/.local/share/casebook/venv;
 #                              después el repo se puede mover o borrar. Para actualizar: casebook update (main)
@@ -13,7 +14,7 @@
 #   ./install.sh --gui         el asistente gráfico, sin preguntar (descarga PySide6 la primera vez, ~110 MB)
 #   ./install.sh --consola     el asistente en la terminal, sin preguntar
 #   ./install.sh --setup       abre el asistente al terminar, sin preguntar (al reinstalar, por defecto se pregunta)
-#   ./install.sh --no-setup    solo instala el paquete; el asistente queda para después (casebook setup)
+#   ./install.sh --no-setup    solo instala el paquete y el comando; el asistente queda para después (casebook setup)
 #   ./install.sh --agents=claude,codex,opencode
 #                              en qué agentes registrar el MCP y las skills, sin preguntar
 #   ./install.sh --skip-mcp    sin registrar el servidor MCP en los agentes
@@ -324,11 +325,14 @@ done
 ok "$("$PY" --version) ($PY)"
 
 # --- entorno y paquete ---------------------------------------------------------------------------------------
-# Una reinstalación (ya hay comando e install-info del mismo modo) no necesita el asistente: solo se ofrece.
+# Una reinstalación (mismo modo, comando presente y el asistente ya terminado alguna vez) no necesita el asistente:
+# solo se ofrece. setup-pending lo deja este script en una instalación nueva y lo borra el asistente al terminar,
+# así una primera instalación con --no-setup (o un asistente cerrado a medias) lo vuelve a abrir la próxima vez.
+SETUP_PENDING="$APP_DIR/setup-pending"
 PREV_MODE="$(sed -n 's/^mode=//p' "$INFO_FILE" 2>/dev/null || true)"
 NEW_MODE="$([[ $DEV -eq 1 ]] && echo dev || echo copia)"
 REINSTALL=0
-if [[ -n "$PREV_MODE" && "$PREV_MODE" == "$NEW_MODE" && -e "$CLI_LINK" ]]; then REINSTALL=1; fi
+if [[ -n "$PREV_MODE" && "$PREV_MODE" == "$NEW_MODE" && -e "$CLI_LINK" && ! -e "$SETUP_PENDING" ]]; then REINSTALL=1; fi
 step "Paquete"
 if [[ ! -x "$VENV/bin/python" ]]; then
     mkdir -p "$(dirname "$VENV")"
@@ -358,6 +362,23 @@ mkdir -p "$APP_DIR"
     echo "source=$REPO"
     echo "installed_at=$(date -Iseconds)"
 } > "$INFO_FILE"
+if [[ $REINSTALL -eq 0 ]]; then touch "$SETUP_PENDING"; fi
+
+# El comando en ~/.local/bin es parte de instalar: funciona aunque el asistente no se abra (--no-setup) o se
+# cierre a medias. Si ya hay un casebook que no es nuestro, no se toca.
+if [[ -L "$CLI_LINK" && "$(readlink "$CLI_LINK")" == "$CLI_TARGET" ]]; then
+    ok "comando casebook en $BIN_DIR"
+elif [[ -e "$CLI_LINK" || -L "$CLI_LINK" ]] && ! ours_link "$CLI_LINK"; then
+    warn "$CLI_LINK ya existe y no es de casebook; no lo toco (quítalo y vuelve a correr ./install.sh)"
+else
+    mkdir -p "$BIN_DIR"
+    ln -sfn "$CLI_TARGET" "$CLI_LINK"
+    ok "comando casebook en $BIN_DIR"
+fi
+case ":$PATH:" in
+    *":$BIN_DIR:"*) ;;
+    *) warn "$BIN_DIR no está en tu PATH: agrega a tu shell  export PATH=\"\$HOME/.local/bin:\$PATH\"" ;;
+esac
 # Al pasar de la instalación local a --dev, su copia ya no la usa nadie: el asistente registra los agentes con el
 # repo. El native host se reescribe ya (y, en modo dev, borra la copia de la extensión) para no apuntar a lo borrado.
 if [[ $DEV -eq 1 && -d "$APP_VENV" ]]; then
@@ -375,7 +396,7 @@ if [[ -f "$APP_DIR/packs/active" ]]; then
 fi
 
 # --- asistente -----------------------------------------------------------------------------------------------
-# El resto (comando, agentes, requisitos, extensión, sesiones) lo hace el asistente, gráfico o de terminal. La
+# El resto (agentes, pack, requisitos, extensión, sesiones) lo hace el asistente, gráfico o de terminal. La
 # primera vez (o al cambiar de modo) es necesario; al reinstalar, casebook ya está configurado y solo se ofrece.
 VERSION="$("$VENV/bin/python" -c 'from importlib.metadata import version; print(version("casebook"))')"
 if [[ $REINSTALL -eq 1 && $SETUP != yes ]]; then
@@ -398,14 +419,14 @@ if [[ $REINSTALL -eq 1 && $SETUP != yes ]]; then
 elif [[ $SETUP == no ]]; then
     step "Listo"
     ok "casebook $VERSION instalado"
-    printf '\n    %sFalta configurarlo (comando, agentes, extensión):%s %s -m casebook.setup %s\n\n' \
-        "$Y" "$N" "$VENV/bin/python" "${MODE_ARGS[*]}"
+    printf '\n    %sFalta configurarlo (agentes, pack, extensión, sesiones):%s casebook setup\n' "$Y" "$N"
+    printf '    %sLa próxima vez que corras ./install.sh el asistente se abre solo hasta que lo termines.%s\n\n' "$D" "$N"
     exit 0
 else
     step "Configuración"
     if [[ $REINSTALL -eq 1 ]]; then ok "casebook $VERSION instalado; abro el asistente"
     elif [[ -n "$PREV_MODE" && "$PREV_MODE" != "$NEW_MODE" ]]; then ok "casebook $VERSION instalado; cambiaste de modo: el asistente vuelve a registrar los agentes"
-    else ok "casebook $VERSION instalado; ahora el asistente lo deja listo (comando, agentes, extensión, sesiones)"; fi
+    else ok "casebook $VERSION instalado; ahora el asistente lo deja listo (agentes, pack, extensión, sesiones)"; fi
 fi
 export CASEBOOK_FROM_INSTALLER=1  # el asistente no repite la cabecera
 exec "$VENV/bin/python" -m casebook.setup "${MODE_ARGS[@]}" ${SETUP_ARGS[@]+"${SETUP_ARGS[@]}"}

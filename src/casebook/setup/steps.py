@@ -98,6 +98,15 @@ def environment(ctx: Context) -> list[Item]:
     return items
 
 
+SETUP_PENDING = "setup-pending"  # lo deja install.sh en una instalación nueva; se borra al terminar el asistente
+
+
+def mark_configured(ctx: Context) -> None:
+    """El asistente llegó al final: la próxima vez install.sh lo trata como reinstalación y solo lo ofrece."""
+    if not ctx.dry_run:
+        (ctx.app_dir / SETUP_PENDING).unlink(missing_ok=True)
+
+
 def link_cli(ctx: Context) -> list[Item]:
     link, target = ctx.cli_link, ctx.cli_target
     items = []

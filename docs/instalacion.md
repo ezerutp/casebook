@@ -49,18 +49,23 @@ pregunta nada. `./install.sh --preview` muestra el asistente sin cambiar nada (n
 `casebook setup` lo vuelve a abrir cuando quieras.
 
 **Cuándo se abre el asistente.** La primera vez, y al cambiar de modo (`--local` ↔ `--dev`), `install.sh` lo abre
-al terminar: sin él no quedan el comando ni los agentes. Al **reinstalar** avisa que casebook quedó instalado y
+al terminar: sin él no quedan registrados los agentes. Si lo saltas o lo cierras a medias, la próxima vez lo vuelve
+a abrir hasta que llegues al final. Al **reinstalar** avisa que casebook quedó instalado y
 pregunta si abrirlo («Terminar aquí» viene marcado). Ábrelo para sumar entornos o fuentes, cambiar de agentes o de
 pack, o volver a cargar la extensión; si no, tu configuración queda igual y lo abres después con `casebook setup`.
 `--setup` lo abre sin preguntar y `--no-setup` solo instala el paquete. `--gui`, `--consola`, `--agents`,
 `--skip-mcp`, `--skip-skill` y `--no-login` configuran el asistente, así que también lo abren. Sin terminal
 interactiva, una reinstalación termina sin abrirlo.
 
+El comando `casebook` lo deja `install.sh` en `~/.local/bin`, antes del asistente: funciona en cualquier carpeta
+aunque no lo abras (si esa carpeta no está en tu `PATH`, te lo avisa). Si ya hay un `casebook` ahí que no es de
+esta instalación, no lo toca.
+
 El instalador no usa sudo y se puede correr de nuevo cuando quieras. Los pasos del asistente:
 
 1. **Bienvenida.** Instala una **copia propia** del paquete en `~/.local/share/casebook/venv` (o editable
    desde el repo con `--dev`). Desde ahí corren el comando y el servidor MCP, así que **el repo se puede mover o
-   borrar** sin romper nada. Deja el comando `casebook` en `~/.local/bin`. En el instalador gráfico, aquí
+   borrar** sin romper nada. Revisa que el comando `casebook` esté en `~/.local/bin`. En el instalador gráfico, aquí
    eliges qué configurar (agentes, extensión, Slack, inicio de sesión): lo que apagues se salta. También puedes
    cambiar de modo: vuelve a correr `./install.sh --dev` o `--local` y abre el asistente de nuevo.
 2. **Agentes.** Eliges en cuáles instalarlo: **Claude Code**, **Codex** y **OpenCode** (vienen marcados los que

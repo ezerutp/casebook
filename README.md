@@ -37,16 +37,18 @@ consulta en vivo.
 
 La instalación tiene dos partes:
 
-1. **`install.sh` instala casebook:** busca Python 3.12+, crea el entorno, instala el paquete y actualiza el pack
-   activo si ya había uno. No usa sudo y se puede correr de nuevo cuando quieras.
+1. **`install.sh` instala casebook:** busca Python 3.12+, crea el entorno, instala el paquete, deja el comando
+   `casebook` en `~/.local/bin` (avisa si esa carpeta no está en tu `PATH`) y actualiza el pack activo si ya había
+   uno. Desde ahí `casebook` funciona en cualquier carpeta, aunque no abras el asistente. No usa sudo y se puede
+   correr de nuevo cuando quieras.
 2. **El asistente lo configura** (`casebook setup`, gráfico o en la terminal):
-   - deja el comando `casebook` en `~/.local/bin`;
    - instala el pack de tu equipo (o te deja seguir sin pack y agregar fuentes a mano);
    - registra el servidor MCP y las skills en los agentes que elijas (Claude Code, Codex, OpenCode);
    - revisa los requisitos y la extensión de Chrome;
    - activa la vigilancia de Slack (opcional) e inicia las sesiones de tus fuentes.
 
-La primera vez, y al cambiar de modo, `install.sh` abre el asistente al terminar. Al reinstalar avisa que
+La primera vez, y al cambiar de modo, `install.sh` abre el asistente al terminar; si lo saltas (`--no-setup`) o
+lo cierras a medias, lo vuelve a abrir la próxima vez hasta que llegues al final. Al reinstalar avisa que
 casebook quedó instalado y pregunta si abrirlo: elige «Abrir el asistente» para sumar entornos o fuentes, cambiar
 de agentes o de pack, o volver a cargar la extensión. Por defecto termina sin tocar tu configuración, y lo abres
 cuando quieras con `casebook setup`.
