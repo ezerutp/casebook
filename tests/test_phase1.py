@@ -114,7 +114,7 @@ def test_mcp_tools(store):
     anyio.run(go)
     session = store.list_sessions()[0]
     assert session["name"] == "SUP-4"
-    assert [e["type"] for e in store.events(session["id"])] == ["session.started", "health", "note"]
+    assert [e["type"] for e in store.events(session["id"])] == ["session.started", "loop.updated", "health", "note"]
 
 
 def test_normalize_cookie():

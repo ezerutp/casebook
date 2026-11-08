@@ -47,6 +47,11 @@ class SlackWatchEnable(BaseModel):
     lookback_minutes: int = 0
 
 
+class LoopUpdate(BaseModel):
+    enabled: bool
+    revision: int | None = None  # ignored; kept for older viewers
+
+
 class SettingsUpdate(BaseModel):
     values: dict[str, Any]
 
@@ -393,6 +398,16 @@ def create_app(store: Store, cfg: Config | None = None, served_by: str = "viewer
     @app.get("/api/sessions")
     def sessions() -> list[dict]:
         return store.list_sessions()
+
+    @app.put("/api/sessions/{session_id}/loop", dependencies=[Depends(require_viewer)])
+    def update_loop(session_id: int, body: LoopUpdate):
+        from ..review import ReviewError
+        if not store.get_session(session_id):
+            raise HTTPException(404, "sesión no encontrada")
+        try:
+            return store.review.toggle(session_id, body.enabled, body.revision)
+        except ReviewError as exc:
+            raise HTTPException(409, str(exc)) from exc
 
     @app.get("/api/sessions/{session_id}/events")
     def session_events(session_id: int, after: int = 0) -> list[dict]:

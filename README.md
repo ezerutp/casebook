@@ -11,6 +11,7 @@ puedes agregar a mano.
 
 | Tool | Qué hace |
 |---|---|
+| `session_finish`, `session_review_status`, `session_review_complete` | Cierre formal y loop de revisiones adicionales, con estado y progreso en el visor |
 | `session_start`, `session_update`, `session_note` | Agrupan las consultas de un caso y dejan conclusiones en el timeline |
 | `session_list`, `session_search`, `session_read`, `session_resume` | Buscan y recuperan investigaciones guardadas; permiten continuar la misma sesión desde otro chat |
 | `knowledge_search`, `knowledge_read`, `knowledge_record`, `knowledge_invalidate` | Memoria técnica local compartida entre investigaciones; búsqueda por fuente, entorno y tema |

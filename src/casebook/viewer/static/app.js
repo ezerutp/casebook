@@ -582,7 +582,7 @@ async function openSession(id) {
     </div>
     <div class="thread-status" aria-live="polite" hidden></div>
     <div class="stats" aria-label="Llamadas por servicio"></div>
-    <div class="card-filters" role="group" aria-label="Filtrar tarjetas"></div>`;
+    <div class="filter-row"><div class="filter-main"><div class="card-filters" role="group" aria-label="Filtrar tarjetas"></div><div class="loop-control"></div></div><div class="filter-search"></div></div>`;
   fillIcons(head);
   $(".copy-md", head).addEventListener("click", async (e) => {
     const md = await fetch(`/api/sessions/${id}/export.md`).then((r) => r.text());
@@ -729,7 +729,62 @@ function renderHead() {
   tiles.push(statTile("clock", "Duración", esc(dur), false));
   $(".stats", head).replaceChildren(...tiles);
   updateFilterCounts();
+  renderLoop();
   sizeHead();
+}
+
+function renderLoop() {
+  const box = $("#session-head .loop-control");
+  const session = currentSession();
+  if (!box || !session) return;
+  const s = session.loop;
+  if (!s) { box.replaceChildren(); return; }
+  const terminal = ["completed", "stopped"].includes(s.status);
+  const progress = s.current ? `${terminal ? s.completed : s.current}/${s.maximum}` : "";
+  // Closed without ever starting a round (loop off at close): it never ran, so it reads as Desactivado.
+  const neverRan = terminal && !s.current;
+  const label = s.status === "stopping" ? `${progress} · Deteniendo…`
+    : neverRan ? "Desactivado"
+    : terminal ? `${progress} · ${s.status === "stopped" ? "Detenido" : s.completed < s.maximum ? "Finalizado" : "Completado"}`
+    : s.status === "initial" ? (s.enabled ? "Activado" : "Desactivado") : progress;
+  const help = s.reason || (s.status === "initial"
+    ? `Hasta ${s.maximum} revisiones adicionales al finalizar. Consume más tokens. Apagarlo no interrumpe la investigación inicial.`
+    : "Revisiones adicionales, no consultas. Apagarlo solicita detenerse en el próximo punto de control.");
+  if (!$(".loop-pill", box)) box.innerHTML = `<div class="loop-pill">
+    <span class="svc-icon" aria-hidden="true"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.7" stroke-linecap="round" stroke-linejoin="round"><path d="M20 7a8 8 0 0 0-13.7-1.5L3 9m0-6v6h6M4 17a8 8 0 0 0 13.7 1.5L21 15m0 6v-6h-6"/></svg></span>
+    <span>Loop</span><span class="loop-progress" aria-live="polite"></span>
+    <button class="switch" role="switch" aria-label="Loop para esta investigación"></button></div>`;
+  const pill = $(".loop-pill", box), toggle = $("button", box);
+  pill.classList.toggle("enabled", s.enabled);
+  pill.tabIndex = terminal ? 0 : -1;
+  pill.dataset.tip = help;
+  $(".loop-progress", box).textContent = label.replace(/^ · /, "");
+  toggle.setAttribute("aria-checked", String(s.enabled));
+  toggle.setAttribute("aria-label", `Loop para esta investigación. ${label}. ${help}`);
+  toggle.disabled = terminal || box.dataset.busy === "1";
+  toggle.onclick = async () => {
+    box.querySelectorAll(".loop-error").forEach((el) => el.remove());
+    box.dataset.busy = "1";
+    toggle.disabled = true;
+    try {
+      const response = await fetch(`/api/sessions/${session.id}/loop`, {method: "PUT",
+        headers: {"Content-Type": "application/json", "x-casebook-viewer": "1"},
+        body: JSON.stringify({enabled: !s.enabled, revision: s.revision})});
+      const result = await response.json();
+      if (!response.ok) throw new Error(result.detail || "No se pudo cambiar el loop");
+      if ((session.loop?.revision ?? -1) <= result.revision) session.loop = result;
+      box.dataset.busy = "0";
+      renderLoop();
+    } catch (error) {
+      box.dataset.busy = "0";
+      await loadSessions();
+      renderLoop();
+      box.querySelectorAll(".loop-error").forEach((el) => el.remove());
+      const message = document.createElement("span");
+      message.className = "loop-error"; message.setAttribute("role", "alert");
+      message.textContent = error.message; box.append(message);
+    }
+  };
 }
 
 function statTile(icon, label, valueHtml, idle) {
@@ -765,8 +820,6 @@ function renderFilters() {
       return b;
     })
   );
-  const spacer = document.createElement("span");
-  spacer.className = "spacer";
   const input = document.createElement("input");
   input.type = "search";
   input.className = "card-search";
@@ -776,7 +829,8 @@ function renderFilters() {
     state.filter.text = input.value.trim().toLowerCase();
     applyFilters();
   });
-  box.append(spacer, input);
+  $("#session-head .filter-search").replaceChildren(input);
+  renderLoop();
   updateFilterCounts();
 }
 
@@ -920,6 +974,12 @@ function applyEvent(ev, live = true) {
   let summary = false;
 
   switch (ev.type) {
+    case "loop.updated": {
+      const session = currentSession();
+      if (session && (!session.loop || session.loop.revision <= p.loop.revision)) session.loop = p.loop;
+      renderLoop();
+      break;
+    }
     case "note": {
       const el = $("#tpl-note").content.firstElementChild.cloneNode(true);
       el.dataset.key = `e${ev.id}`;
@@ -1536,6 +1596,7 @@ function connect(after) {
     } else {
       const s = state.sessions.find((x) => x.id === ev.session_id);
       if (s) {
+        if (ev.type === "loop.updated" && (!s.loop || s.loop.revision <= ev.payload.loop.revision)) s.loop = ev.payload.loop;
         if (ev.type === "session.updated") {
           s.name = ev.payload.name;
           s.card = ev.payload.card;

@@ -36,6 +36,11 @@ def expected_errors(recorder: Recorder, cfg: Config | None = None):
             started = recorder.queries_started
             token = current_purpose.set((kwargs.pop("purpose", None) or "").strip() or None)
             try:
+                from ..review import ReviewError
+                try:
+                    recorder.store.review.query_gate(recorder.ensure_session())
+                except ReviewError as exc:
+                    raise ToolError(str(exc)) from exc
                 return await fn(*args, **kwargs)
             except guards.GuardError as exc:
                 if recorder.queries_started == started and recorder.session_id is not None:

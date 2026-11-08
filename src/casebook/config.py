@@ -164,6 +164,9 @@ class Config:
     approval_timeout_s: float = 180
     # Abrir el visor en el navegador en la primera session_start si no hay ninguna pestaña conectada.
     viewer_auto_open: bool = True
+    # Defaults copied into new investigations; existing sessions keep their own values.
+    loop_enabled: bool = False
+    loop_max_additional_reviews: int = 1
     # Base de los links a las cards (por ejemplo https://<sitio>.atlassian.net/browse/). Sin valor, el visor no
     # muestra el botón "Abrir card".
     jira_base_url: str | None = None
@@ -274,8 +277,12 @@ class Setting:
                 if not number.is_integer():
                     raise SettingError(f"{self.key}: tiene que ser un número entero")
                 number = int(number)
+            if self.key == "loop.max_additional_reviews" and number < 1:
+                raise SettingError(f"{self.key}: tiene que ser un entero positivo")
             out_of_range = self.min is not None and number < self.min or self.max is not None and number > self.max
             if strict and out_of_range:
+                if self.max is None:
+                    raise SettingError(f"{self.key}: mínimo {self.min:g}")
                 raise SettingError(f"{self.key}: tiene que estar entre {self.min:g} y {self.max:g}")
             return number
         text = str(value).strip()
@@ -356,11 +363,15 @@ def _code_paths(text: str, strict: bool) -> str | None:
 def _target(cfg: Config, attr: str) -> tuple[Any, str]:
     if attr.startswith("db."):
         return cfg.db, attr[3:]
+    if attr.startswith("slack_triage."):
+        return cfg.slack_triage, attr[len("slack_triage."):]
     return cfg, attr
 
 
 # Los mínimos y máximos son límites duros: desde el visor se pueden ajustar las guardas, no desactivarlas.
 SETTINGS: tuple[Setting, ...] = (
+    Setting("loop.enabled", "loop_enabled", bool),
+    Setting("loop.max_additional_reviews", "loop_max_additional_reviews", int, 1),
     Setting("viewer.host", "viewer_host", str, restart=True, choices=("127.0.0.1", "::1", "localhost")),
     Setting("viewer.port", "viewer_port", int, 1024, 65535, restart=True),
     Setting("viewer.auto_open", "viewer_auto_open", bool),
@@ -380,6 +391,8 @@ SETTINGS: tuple[Setting, ...] = (
     Setting("slack.analysis_effort", "slack_analysis_effort", str,
             choices=("low", "medium", "high", "xhigh", "max")),
     Setting("slack.max_analyses_per_day", "slack_max_analyses_per_day", int, 1, 500),
+    # Global budget for one automatic analysis, shared by the initial pass and every loop review.
+    Setting("slack.triage.max_queries", "slack_triage.max_queries", int, 1, 200),
     Setting("slack.code_paths", "slack_code_paths", str, optional=True),
     Setting("db.default_limit", "db.default_limit", int, 1, 10_000),
     Setting("db.max_limit", "db.max_limit", int, 1, 10_000),
@@ -537,6 +550,10 @@ def load(path: Path | None = None, pack: Path | str | None = _ACTIVE) -> Config:
         if unknown:
             raise SettingError(f"slack.triage: opción desconocida: {', '.join(unknown)}")
         cfg.slack_triage = Triage(**{**vars(Triage()), **triage})
+        for setting in SETTINGS:  # the table replaces the object: keep the validated value of its settings
+            found, value = _lookup(data, setting.key)
+            if found and setting.attr.startswith("slack_triage."):
+                setting.set(cfg, setting.coerce(value, strict=False))
         if cfg.slack_triage.escalation not in cfg.slack_triage.outcomes:
             raise SettingError("slack.triage.escalation tiene que ser uno de los outcomes")
         extra = cfg.slack_triage.allowed_tools
@@ -796,14 +813,17 @@ def save(values: dict[str, Any], path: Path | None = None, pack: Path | str | No
     _check_consistency(probe)
 
     for key, value in clean.items():
-        section, name = key.split(".", 1)
-        table = data.setdefault(section, {})
+        *sections, name = key.split(".")  # nested keys such as slack.triage.max_queries
+        tables = [data]
+        for section in sections:
+            tables.append(tables[-1].setdefault(section, {}))
         if value is None or value == BY_KEY[key].get(defaults):
-            table.pop(name, None)
+            tables[-1].pop(name, None)
         else:
-            table[name] = value
-        if not table:
-            data.pop(section, None)
+            tables[-1][name] = value
+        for parent, section, table in reversed(list(zip(tables, sections, tables[1:]))):
+            if not table:
+                parent.pop(section, None)
 
     path.parent.mkdir(parents=True, exist_ok=True)
     if path.exists():

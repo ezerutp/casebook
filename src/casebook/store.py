@@ -51,6 +51,9 @@ class Store:
         self._conn.execute("PRAGMA journal_mode=WAL")
         self._conn.execute("PRAGMA busy_timeout=5000")
         self._conn.executescript(SCHEMA)
+        from .review import Review, SCHEMA as REVIEW_SCHEMA
+        self._conn.executescript(REVIEW_SCHEMA)
+        self.review = Review(self)
         # Nombres provisionales de versiones anteriores; conserva IDs e historial.
         self._conn.execute(
             "UPDATE sessions SET name = COALESCE(NULLIF(card, ''), 'Sin identificar · ' || id) "
@@ -117,7 +120,7 @@ class Store:
 
     def get_session(self, session_id: int) -> dict[str, Any] | None:
         row = self._conn.execute("SELECT * FROM sessions WHERE id = ?", (session_id,)).fetchone()
-        return dict(row) if row else None
+        return {**dict(row), "loop": self.review.get(session_id)} if row else None
 
     def list_sessions(self) -> list[dict[str, Any]]:
         rows = self._conn.execute(
@@ -128,7 +131,7 @@ class Store:
                GROUP BY s.id
                ORDER BY COALESCE(MAX(e.ts), s.created_at) DESC, COALESCE(MAX(e.id), 0) DESC, s.id DESC"""
         ).fetchall()
-        return [dict(r) for r in rows]
+        return [{**dict(r), "loop": self.review.get(r["id"])} for r in rows]
 
     # --- eventos --------------------------------------------------------------------------------------------
 
