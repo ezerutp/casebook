@@ -39,7 +39,7 @@ Cómo funciona:
 - El ícono de la llave en la barra de Chrome abre una ventanita con el estado de cada servicio (cuándo se guardó
   la sesión o por qué no validó) y un botón «Enviar sesiones ahora». `doctor` muestra lo mismo en la terminal.
   El ícono es provisional: la fuente está en `chrome-extension/icons/icon.svg`.
-- Después de actualizar (`git pull && ./install.sh`), recarga la extensión en `chrome://extensions` (⟳).
+- Después de actualizar (`casebook update` o `./install.sh`), recarga la extensión en `chrome://extensions` (⟳).
   `casebook extension
   uninstall` quita el native host; la extensión se quita en `chrome://extensions`.
 

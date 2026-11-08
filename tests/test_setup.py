@@ -39,6 +39,20 @@ def test_link_cli_creates_link_and_respects_foreign_files(ctx):
     assert ctx.cli_link.read_text() == "otro programa"
 
 
+def test_finishing_the_wizard_clears_the_pending_mark(ctx):
+    # install.sh deja setup-pending en una instalación nueva; el asistente lo borra al llegar a «Listo».
+    pending = ctx.app_dir / steps.SETUP_PENDING
+    pending.parent.mkdir(parents=True)
+    pending.touch()
+    ctx.dry_run = True
+    steps.mark_configured(ctx)
+    assert pending.exists()
+    ctx.dry_run = False
+    steps.mark_configured(ctx)
+    assert not pending.exists()
+    steps.mark_configured(ctx)  # sin marca no falla
+
+
 def test_dry_run_changes_nothing(ctx):
     ctx.dry_run = True
     steps.link_cli(ctx)

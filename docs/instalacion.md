@@ -48,11 +48,24 @@ Después prepara lo mínimo (Python 3.12+, el entorno y el paquete) y te pregunt
 pregunta nada. `./install.sh --preview` muestra el asistente sin cambiar nada (necesita una instalación previa), y
 `casebook setup` lo vuelve a abrir cuando quieras.
 
-El instalador no usa sudo y se puede correr de nuevo cuando quieras. Los pasos:
+**Cuándo se abre el asistente.** La primera vez, y al cambiar de modo (`--local` ↔ `--dev`), `install.sh` lo abre
+al terminar: sin él no quedan registrados los agentes. Si lo saltas o lo cierras a medias, la próxima vez lo vuelve
+a abrir hasta que llegues al final. Al **reinstalar** avisa que casebook quedó instalado y
+pregunta si abrirlo («Terminar aquí» viene marcado). Ábrelo para sumar entornos o fuentes, cambiar de agentes o de
+pack, o volver a cargar la extensión; si no, tu configuración queda igual y lo abres después con `casebook setup`.
+`--setup` lo abre sin preguntar y `--no-setup` solo instala el paquete. `--gui`, `--consola`, `--agents`,
+`--skip-mcp`, `--skip-skill` y `--no-login` configuran el asistente, así que también lo abren. Sin terminal
+interactiva, una reinstalación termina sin abrirlo.
+
+El comando `casebook` lo deja `install.sh` en `~/.local/bin`, antes del asistente: funciona en cualquier carpeta
+aunque no lo abras (si esa carpeta no está en tu `PATH`, te lo avisa). Si ya hay un `casebook` ahí que no es de
+esta instalación, no lo toca.
+
+El instalador no usa sudo y se puede correr de nuevo cuando quieras. Los pasos del asistente:
 
 1. **Bienvenida.** Instala una **copia propia** del paquete en `~/.local/share/casebook/venv` (o editable
    desde el repo con `--dev`). Desde ahí corren el comando y el servidor MCP, así que **el repo se puede mover o
-   borrar** sin romper nada. Deja el comando `casebook` en `~/.local/bin`. En el instalador gráfico, aquí
+   borrar** sin romper nada. Revisa que el comando `casebook` esté en `~/.local/bin`. En el instalador gráfico, aquí
    eliges qué configurar (agentes, extensión, Slack, inicio de sesión): lo que apagues se salta. También puedes
    cambiar de modo: vuelve a correr `./install.sh --dev` o `--local` y abre el asistente de nuevo.
 2. **Agentes.** Eliges en cuáles instalarlo: **Claude Code**, **Codex** y **OpenCode** (vienen marcados los que
@@ -91,8 +104,16 @@ El instalador no usa sudo y se puede correr de nuevo cuando quieras. Los pasos:
    falten (un login en curso se puede cancelar). Se salta si ninguna fuente inicia sesión en el navegador.
 7. **Listo.** Lo pendiente, si algo, y los siguientes pasos.
 
-**Actualizar:** `git pull && ./install.sh` (vuelve a copiar el paquete y las skills; tus sesiones y credenciales no
-se tocan).
+**Actualizar** la instalación local (tus sesiones, conocimiento y credenciales no se tocan):
+
+- `casebook update`: hace `git fetch` en el repo de donde instalaste y copia el paquete desde `origin/main`. No
+  cambia tu rama ni tus cambios locales.
+- `casebook update-dev`: copia el paquete desde tu copia de trabajo tal como está (rama actual y cambios sin commit),
+  para probar tus cambios sin pasar a modo desarrollo.
+
+Los dos vuelven a copiar la extensión de Chrome si está registrada. Después reinicia Claude Code (o reconecta el MCP
+con `/mcp`) y recarga el visor. No abren el asistente: para cambiar agentes, skills o el pack, `./install.sh`.
+En modo desarrollo no hacen falta: el paquete es editable y basta `git pull`.
 
 **Modo desarrollo:** elegirlo en el menú (o `./install.sh --dev`) instala en modo editable desde el repo (`.venv` del repo, y las skills
 enlazadas al repo): tus cambios aplican sin reinstalar, con solo reconectar el MCP. Si venías de la instalación
@@ -101,8 +122,9 @@ apuntar al repo; la extensión de Chrome cargada desde esa copia hay que volver 
 asistente lo marca como «su carpeta ya no existe»). Para volver a la copia propia, elige «Instalación local» (o
 `./install.sh --local`); el `.venv` del repo queda para los tests.
 
-Otras opciones: `--no-login` (sin el paso de inicio de sesión), `--agents=…`, `--skip-mcp`, `--skip-skill` (ambas
-aplican a los agentes elegidos) y `--uninstall`.
+Otras opciones: `--setup` y `--no-setup` (abrir o no el asistente), `--no-login` (sin el paso de inicio de sesión),
+`--agents=…`, `--skip-mcp`, `--skip-skill` (ambas aplican a los agentes elegidos) y `--uninstall`. La lista completa
+está en el [README](../README.md#instalación).
 
 **Desinstalar:** `./install.sh --uninstall` detiene los visores y servidores MCP que estén corriendo (los de Claude
 Code se cierran) y quita la instalación, el comando, las skills, el registro del MCP en los tres agentes y el native

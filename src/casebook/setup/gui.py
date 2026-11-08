@@ -307,7 +307,7 @@ class WelcomePage(Page):
         self.body.addLayout(hbox(label("Cómo instalarlo", "Heading"), help_icon, None, spacing=6))
         self.mode = Segmented(p, [("package", "Instalación local"), ("code", "Modo desarrollo")], 1 if self.ctx.dev else 0)
         tip(self.mode.buttons[0], "Una copia propia en ~/.local/share/casebook: el repo se puede mover o "
-                                  "borrar. Para actualizar: git pull && ./install.sh", "Instalación local")
+                                  "borrar. Para actualizar: casebook update", "Instalación local")
         tip(self.mode.buttons[1], "Tus cambios en el repo aplican sin reinstalar: solo reconecta el MCP. Usa el "
                                   ".venv del repo.", "Editable desde este repo")
         self.mode.changed.connect(self._mode_changed)
@@ -1550,6 +1550,7 @@ class DonePage(Page):
         self.body.addLayout(grid)
 
     def enter(self) -> None:
+        steps.mark_configured(self.ctx)
         p = self.palette_
         self.hero_lead.setText(f"casebook quedó instalado en {self.ctx.mode_label}. Esto es lo que sigue.")
         pending = [i for page in self.window_.pages[:-1] if page.enabled for i in page.summary()]

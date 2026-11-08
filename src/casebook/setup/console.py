@@ -372,6 +372,7 @@ class Wizard:
         self.c.print(Padding(table, (0, 1)))
 
     def finish(self) -> None:
+        steps.mark_configured(self.ctx)
         self.step(7, "Listo", "casebook quedó instalado.")
         if self.pending:
             self.c.print(Padding(Text(f"{len(self.pending)} pendiente(s):", style=f"bold {WARN}"), (0, 2)))
@@ -388,7 +389,8 @@ class Wizard:
         self.c.print(Padding(Panel(nxt, title="Siguientes pasos", title_align="left", border_style=BORDER,
                                    box=box.ROUNDED, padding=(0, 1)), (1, 2, 0, 2)))
         if not self.ctx.dev:
-            self.c.print(Padding(Text("Para actualizar: git pull && ./install.sh", style=MUTED), (0, 2)))
+            self.c.print(Padding(Text("Para actualizar: casebook update (main) o casebook update-dev (tu copia de "
+                                      "trabajo)", style=MUTED), (0, 2)))
 
 
 def run(ctx: steps.Context, console: Console) -> int:

@@ -3,7 +3,7 @@
 // respetan al pegar. Junto al HTML va un texto plano por si el destino no acepta HTML: para Jira el markdown tal cual,
 // para Slack el formato de Slack (*negrita*, _cursiva_, viñetas •).
 // Cubre el markdown que escriben los borradores: párrafos, listas (con anidación), títulos, citas, bloques de código,
-// **negrita**, *cursiva*, `código` y [enlaces](url).
+// tablas, **negrita**, *cursiva*, `código` y [enlaces](url).
 
 const richCopy = (() => {
   const escapeHtml = (s) => s.replace(/&/g, "&amp;").replace(/</g, "&lt;").replace(/>/g, "&gt;").replace(/"/g, "&quot;");
@@ -30,6 +30,10 @@ const richCopy = (() => {
   }
 
   const LIST_ITEM = /^(\s*)([*+-]|\d+[.)])\s+(.*)$/;
+  // Tabla de markdown: una fila de encabezado con barras seguida de la fila separadora (| --- | :---: |).
+  const TABLE_SEPARATOR = /^\s*\|?\s*:?-+:?\s*(\|\s*:?-+:?\s*)*\|?\s*$/;
+  const isTableStart = (lines, i) => lines[i].includes("|") && i + 1 < lines.length && TABLE_SEPARATOR.test(lines[i + 1]);
+  const tableCells = (line) => line.trim().replace(/^\|/, "").replace(/(?<!\\)\|$/, "").split(/(?<!\\)\|/).map((c) => c.trim());
 
   // Bloques: código, títulos, citas, listas y párrafos. Cada uno llega a `out` ya separado.
   function blocks(md, out) {
@@ -64,14 +68,21 @@ const richCopy = (() => {
         const items = [];
         for (; i < lines.length && lines[i].trim(); i++) {
           const m = lines[i].match(LIST_ITEM);
-          if (m) items.push({ indent: m[1].replace(/\t/g, "    ").length, ordered: /\d/.test(m[2]), text: m[3] });
+          if (m) items.push({ indent: m[1].replace(/\t/g, "    ").length, ordered: /\d/.test(m[2]), start: parseInt(m[2], 10), text: m[3] });
           else if (items.length) items[items.length - 1].text += `\n${lines[i].trim()}`;
         }
         out.list(items);
         continue;
       }
+      if (isTableStart(lines, i)) {
+        const header = tableCells(line);
+        const rows = [];
+        for (i += 2; i < lines.length && lines[i].trim() && lines[i].includes("|"); i++) rows.push(tableCells(lines[i]));
+        out.table(header, rows);
+        continue;
+      }
       const para = [];
-      for (; i < lines.length && lines[i].trim() && !LIST_ITEM.test(lines[i]) && !/^\s*(```|~~~|#{1,6}\s|>)/.test(lines[i]); i++) {
+      for (; i < lines.length && lines[i].trim() && !LIST_ITEM.test(lines[i]) && !/^\s*(```|~~~|#{1,6}\s|>)/.test(lines[i]) && !isTableStart(lines, i); i++) {
         para.push(lines[i].trim());
       }
       out.paragraph(para);
@@ -96,7 +107,8 @@ const richCopy = (() => {
       if (!top || item.indent > top.indent) {
         const tag = item.ordered ? "ol" : "ul";
         open.push({ indent: item.indent, tag });
-        html += `<${tag}>`;
+        // Una lista numerada cortada por un párrafo o una tabla sigue en "2.": sin `start` el HTML la reinicia en 1.
+        html += item.ordered && item.start > 1 ? `<ol start="${item.start}">` : `<${tag}>`;
       } else {
         html += "</li>";
       }
@@ -113,6 +125,9 @@ const richCopy = (() => {
       heading: (level, t) => parts.push(`<h${level}>${inline(t, HTML)}</h${level}>`),
       quote: (lines) => parts.push(`<blockquote>${toHtml(lines.join("\n"))}</blockquote>`),
       list: (items) => parts.push(htmlList(items)),
+      table: (header, rows) => parts.push(
+        `<table><thead><tr>${header.map((c) => `<th>${inline(c, HTML)}</th>`).join("")}</tr></thead>`
+        + `<tbody>${rows.map((r) => `<tr>${header.map((_, j) => `<td>${inline(r[j] ?? "", HTML)}</td>`).join("")}</tr>`).join("")}</tbody></table>`),
       paragraph: (lines) => parts.push(`<p>${lines.map((l) => inline(l, HTML)).join("<br>")}</p>`),
     });
     return parts.join("\n");
@@ -143,6 +158,11 @@ const richCopy = (() => {
           return `${"    ".repeat(depth)}${marker} ${it.text.split("\n").map((l) => inline(l, SLACK)).join("\n")}`;
         }).join("\n"));
       },
+      // Slack no tiene tablas: cada fila va como una línea con las celdas separadas, y el encabezado en negrita.
+      table: (header, rows) => parts.push([
+        `*${header.map((c) => inline(c, SLACK)).join(" · ")}*`,
+        ...rows.map((r) => r.map((c) => inline(c, SLACK)).join(" · ")),
+      ].join("\n")),
       paragraph: (lines) => parts.push(lines.map((l) => inline(l, SLACK)).join("\n")),
     });
     return parts.join("\n\n");
