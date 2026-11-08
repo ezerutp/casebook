@@ -1218,3 +1218,7 @@ tr:hover td { background: var(--code-bg); }
 .filter-search { display:flex; justify-content:flex-end; }
 #sessions-view:has(.summary[hidden]) .filter-row { grid-template-columns:minmax(0,1fr) auto; }
 @media(max-width:1180px) { .filter-row, #sessions-view:has(.summary[hidden]) .filter-row { grid-template-columns:1fr; } }
+/* Not enough room for the filters and the Loop pill on one line: icon filters keep only icon and count. */
+.filter-row.compact .chip-filter:has(.svc-icon) .chip-label {
+  position:absolute; width:1px; height:1px; overflow:hidden; clip:rect(0 0 0 0); white-space:nowrap;
+}

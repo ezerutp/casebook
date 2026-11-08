@@ -762,6 +762,7 @@ function renderLoop() {
   toggle.setAttribute("aria-checked", String(s.enabled));
   toggle.setAttribute("aria-label", `Loop para esta investigación. ${label}. ${help}`);
   toggle.disabled = terminal || box.dataset.busy === "1";
+  fitFilterRow();
   toggle.onclick = async () => {
     box.querySelectorAll(".loop-error").forEach((el) => el.remove());
     box.dataset.busy = "1";
@@ -785,6 +786,37 @@ function renderLoop() {
       message.textContent = error.message; box.append(message);
     }
   };
+}
+
+// When the filters and the Loop pill do not fit on one line (about 1440 px wide), service filters with an
+// icon drop their name: it stays for screen readers and as a tooltip. Measured, not a fixed breakpoint,
+// because counts and the pill's status change the widths.
+function fitFilterRow() {
+  const row = $("#session-head .filter-row");
+  const filters = $("#session-head .card-filters");
+  const loop = $("#session-head .loop-control");
+  if (!row || !filters) return;
+  const wraps = () => {
+    const chips = [...filters.children];
+    const top = chips[0]?.offsetTop ?? 0;
+    return chips.some((c) => c.offsetTop !== top) || (loop?.childElementCount && loop.offsetTop > filters.offsetTop + 4);
+  };
+  row.classList.remove("compact");
+  const compact = wraps();
+  row.classList.toggle("compact", compact);
+  filters.querySelectorAll(".chip-filter").forEach((b) => {
+    if (compact && b.querySelector(".svc-icon")) b.dataset.tip = b.dataset.label;
+    else delete b.dataset.tip;
+  });
+}
+
+let filterRowObserver = null;
+function watchFilterRow() {
+  const main = $("#session-head .filter-main");
+  if (!main) return;
+  filterRowObserver?.disconnect();
+  filterRowObserver = new ResizeObserver(() => fitFilterRow());
+  filterRowObserver.observe(main);
 }
 
 function statTile(icon, label, valueHtml, idle) {
@@ -814,7 +846,8 @@ function renderFilters() {
       b.className = `chip-filter svc-${kind}`;
       b.dataset.kind = kind;
       b.setAttribute("aria-pressed", String(state.filter.kind === kind));
-      b.innerHTML = `${icon ? `<span class="svc-icon" aria-hidden="true">${ICONS[icon]}</span>` : ""}<span></span> <span class="count"></span>`;
+      b.innerHTML = `${icon ? `<span class="svc-icon" aria-hidden="true">${ICONS[icon]}</span>` : ""}<span class="chip-label"></span> <span class="count"></span>`;
+      b.dataset.label = label;
       b.children[icon ? 1 : 0].textContent = label;
       b.addEventListener("click", () => setKindFilter(state.filter.kind === kind ? "all" : kind));
       return b;
@@ -830,6 +863,7 @@ function renderFilters() {
     applyFilters();
   });
   $("#session-head .filter-search").replaceChildren(input);
+  watchFilterRow();
   renderLoop();
   updateFilterCounts();
 }
@@ -857,6 +891,7 @@ function updateFilterCounts() {
     $(".count", b).textContent = n;
     b.disabled = !n && b.dataset.kind !== "all" && state.filter.kind !== b.dataset.kind;
   });
+  fitFilterRow();  // a longer count can push the pill to a second line
 }
 
 function cardMatches(el) {
