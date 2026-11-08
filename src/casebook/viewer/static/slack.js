@@ -33,7 +33,7 @@ const slackPanel = (() => {
     // El error, en su recuadro: título, qué hacer y el detalle plegado. Con la vigilancia apagada no se muestra.
     showAlert($("#slack-alert"), st.enabled ? st.last_error || st.listener_error : null,
       st.enabled && st.last_error ? retryPoll : null);
-    status.title = st.enabled && st.last_notification ? `Última notificación: ${relTime(st.last_notification * 1000)}` : "";
+    status.dataset.tip = st.enabled && st.last_notification ? `Última notificación: ${relTime(st.last_notification * 1000)}` : "";
     $("#slack-when").textContent = st.enabled && st.last_poll ? relTime(st.last_poll * 1000) : "";
     renderManual();
   }

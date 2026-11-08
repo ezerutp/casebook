@@ -517,6 +517,9 @@ const onboarding = (() => {
         "de nuevo con el botón.",
       target: () => $("#conn-list")?.closest(".conn-panel"),
       place: "right",
+      async enter() {
+        connPanel.expand();
+      },
     },
     {
       id: "settings",
@@ -538,7 +541,7 @@ const onboarding = (() => {
       text: "Esquemas, relaciones y referencias que se guardaron en otras investigaciones, con su evidencia. Filtra por " +
         "fuente, entorno o estado antes de reutilizarlos.",
       target: () => $("#knowledge-filters"),
-      place: "bottom",
+      place: "right",
       async enter() {
         await goView("#/knowledge", () => !$("#knowledge-view").hidden && $("#knowledge-filters"));
       },

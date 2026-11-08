@@ -9,7 +9,7 @@
 <body>
   <aside class="sidebar">
     <header class="brand">
-      <span class="dot" id="conn" title="Conexión con el servidor"></span>
+      <span class="dot" id="conn" data-tip="Conexión con el servidor"></span>
       <h1>casebook</h1>
       <span class="version" id="version"></span>
     </header>
@@ -74,11 +74,17 @@
 
     <section class="conn-panel" aria-labelledby="conn-title">
       <div class="conn-head">
-        <h2 id="conn-title">Conexiones</h2>
+        <button class="conn-toggle" id="conn-toggle" aria-expanded="true" aria-controls="conn-body">
+          <span class="conn-chevron" aria-hidden="true"></span>
+          <span class="conn-title" id="conn-title">Conexiones</span>
+          <span class="conn-summary" id="conn-summary"></span>
+        </button>
         <span class="conn-when" id="conn-when"></span>
-        <button class="icon-btn" id="recheck" title="Revisar las conexiones ahora" aria-label="Revisar las conexiones ahora"></button>
+        <button class="icon-btn" id="recheck" data-tip="Revisar las conexiones ahora" aria-label="Revisar las conexiones ahora"></button>
       </div>
-      <ul class="conn-list" id="conn-list"><li class="conn-empty">Sin chequeos todavía.</li></ul>
+      <div class="conn-body" id="conn-body">
+        <ul class="conn-list" id="conn-list"><li class="conn-empty">Sin chequeos todavía.</li></ul>
+      </div>
     </section>
   </aside>
 
@@ -107,8 +113,8 @@
           <h2>Borrador para <span class="draft-card"></span></h2>
           <p class="sum-draft-text"></p>
           <div class="sum-actions">
-            <button class="copy-draft" data-target="jira" title="Copiar con formato para pegar en un comentario de Jira"><span class="btn-icon" data-icon="copy" aria-hidden="true"></span><span>Jira</span></button>
-            <button class="copy-draft" data-target="slack" title="Copiar con formato para pegar en Slack"><span class="btn-icon" data-icon="copy" aria-hidden="true"></span><span>Slack</span></button>
+            <button class="copy-draft" data-target="jira" data-tip="Copiar con formato para pegar en un comentario de Jira"><span class="btn-icon" data-icon="copy" aria-hidden="true"></span><span>Jira</span></button>
+            <button class="copy-draft" data-target="slack" data-tip="Copiar con formato para pegar en Slack"><span class="btn-icon" data-icon="copy" aria-hidden="true"></span><span>Slack</span></button>
             <button class="ghost see-draft">Ver completo</button>
           </div>
         </section>
@@ -155,35 +161,38 @@
         </div>
       </div>
     </div>
-    <section id="knowledge-view" hidden aria-labelledby="knowledge-title">
-      <header class="knowledge-head">
-        <div><h2 id="knowledge-title">Conocimiento</h2><p>Lo aprendido entre investigaciones, con su evidencia y fecha de verificación.</p></div>
-        <button id="knowledge-import">Importar esquemas de sesiones</button>
-        <button id="knowledge-reload">Actualizar</button>
-      </header>
-      <form id="knowledge-filters" class="knowledge-filters">
-        <label>Buscar<input name="q" type="search" placeholder="Tabla, campo o concepto"></label>
-        <label>Fuente<select name="source"><option value="">Todas</option><option value="mysql">MySQL</option><option value="opensearch">OpenSearch</option><option value="cloudwatch">CloudWatch</option><option value="code">Código</option></select></label>
-        <label>Entorno<input name="environment" placeholder="prod/app"></label>
-        <label>Tema<input name="topic" placeholder="ventas, clicks…"></label>
-        <label>Estado<select name="status"><option value="">Todos</option><option value="verified">Verificado</option><option value="pending">Por verificar</option><option value="stale">Desactualizado</option></select></label>
-        <button type="submit">Buscar</button>
-      </form>
-      <p id="knowledge-message" role="status" aria-live="polite"></p>
-      <div class="knowledge-layout">
-        <div>
-          <div class="knowledge-list-toolbar">
-            <p id="knowledge-count" aria-live="polite"></p>
+    <section id="knowledge-view" class="skills-view knowledge-view" hidden aria-labelledby="knowledge-title">
+      <div class="skills-list knowledge-side">
+        <div class="skills-head">
+          <h2 id="knowledge-title">Conocimiento</h2>
+          <button id="knowledge-reload"><span class="btn-icon" data-icon="refresh" aria-hidden="true"></span><span>Actualizar</span></button>
+        </div>
+        <p class="skills-intro">Lo aprendido entre investigaciones, con su evidencia y fecha de verificación.</p>
+        <form id="knowledge-filters" class="knowledge-filters">
+          <input name="q" type="search" class="search" placeholder="Buscar tabla, campo o concepto" aria-label="Buscar en el conocimiento">
+          <div class="knowledge-filter-row">
+            <select name="source" aria-label="Fuente"><option value="">Todas las fuentes</option><option value="mysql">MySQL</option><option value="opensearch">OpenSearch</option><option value="cloudwatch">CloudWatch</option><option value="code">Código</option></select>
+            <select name="status" aria-label="Estado"><option value="">Todos los estados</option><option value="verified">Verificado</option><option value="pending">Por verificar</option><option value="stale">Desactualizado</option></select>
+            <input name="environment" placeholder="Entorno (prod/app)" aria-label="Entorno">
+            <input name="topic" placeholder="Tema (ventas, clicks…)" aria-label="Tema">
+          </div>
+          <button type="submit" hidden>Buscar</button>
+        </form>
+        <p id="knowledge-message" role="status" aria-live="polite"></p>
+        <section class="skills-group">
+          <div class="knowledge-group-head">
+            <h3 id="knowledge-count" aria-live="polite"></h3>
             <nav class="knowledge-pagination" aria-label="Páginas de conocimiento">
-              <button id="knowledge-prev" aria-label="Página anterior" title="Página anterior" disabled>‹</button>
-              <span id="knowledge-page" aria-live="polite">Página 1 de 1</span>
-              <button id="knowledge-next" aria-label="Página siguiente" title="Página siguiente" disabled>›</button>
+              <button class="icon-btn" id="knowledge-prev" aria-label="Página anterior" data-tip="Página anterior" disabled>‹</button>
+              <span id="knowledge-page" aria-live="polite">1 / 1</span>
+              <button class="icon-btn" id="knowledge-next" aria-label="Página siguiente" data-tip="Página siguiente" disabled>›</button>
             </nav>
           </div>
-          <nav id="knowledge-list" aria-label="Entradas de conocimiento"></nav>
-        </div>
-        <article id="knowledge-detail" aria-label="Detalle del conocimiento"><p class="empty">Selecciona una entrada para ver su contenido y evidencia.</p></article>
+          <nav id="knowledge-list" class="knowledge-list" aria-label="Entradas de conocimiento"></nav>
+        </section>
+        <button id="knowledge-import" class="ghost knowledge-import" data-tip="Lee los esquemas que ya quedaron en tus sesiones; no consulta servicios. Repetirlo no duplica entradas."><span class="btn-icon" data-icon="download" aria-hidden="true"></span><span>Importar esquemas de sesiones</span></button>
       </div>
+      <article id="knowledge-detail" class="skill-detail panel" aria-label="Detalle del conocimiento"><p class="empty">Selecciona una entrada para ver su contenido y evidencia.</p></article>
     </section>
   </main>
 
@@ -306,8 +315,8 @@
         <span class="purpose">Borrador para <span class="draft-card"></span></span>
         <span class="meta">no publicado</span>
         <button class="draft-history" hidden aria-haspopup="dialog">Editado</button>
-        <button class="copy-draft" data-target="jira" title="Copiar con formato para pegar en un comentario de Jira"><span class="btn-icon" data-icon="copy" aria-hidden="true"></span><span>Jira</span></button>
-        <button class="copy-draft" data-target="slack" title="Copiar con formato para pegar en Slack"><span class="btn-icon" data-icon="copy" aria-hidden="true"></span><span>Slack</span></button>
+        <button class="copy-draft" data-target="jira" data-tip="Copiar con formato para pegar en un comentario de Jira"><span class="btn-icon" data-icon="copy" aria-hidden="true"></span><span>Jira</span></button>
+        <button class="copy-draft" data-target="slack" data-tip="Copiar con formato para pegar en Slack"><span class="btn-icon" data-icon="copy" aria-hidden="true"></span><span>Slack</span></button>
         <time></time>
       </div>
       <p class="note-text"></p>
@@ -325,12 +334,14 @@
     </li>
   </template>
 
+  <script src="/static/tooltip.js"></script>
   <script src="/static/rich-copy.js"></script>
   <script src="/static/app.js"></script>
   <script src="/static/settings.js"></script>
   <script src="/static/skills.js"></script>
   <script src="/static/knowledge.js"></script>
   <script src="/static/slack.js"></script>
+  <script src="/static/scroll-top.js"></script>
   <script src="/static/vendor/gsap.min.js"></script>
   <script src="/static/onboarding.js"></script>
 </body>

@@ -148,7 +148,7 @@ const settingsView = (() => {
       const t = document.createElement("span");
       t.className = `tag ${cls}`;
       t.textContent = text;
-      if (title) t.title = title;
+      if (title) t.dataset.tip = title;
       name.append(t);
     };
     if (s.key in draft) tag("changed", "modificado");
@@ -222,7 +222,7 @@ const settingsView = (() => {
       input.disabled = readOnly;
       input.setAttribute("aria-label", meta.label);
       $(".unit", wrap).textContent = meta.unit || "";
-      wrap.title = `Entre ${fmtValue(s.min)} y ${fmtValue(s.max)}`;
+      wrap.dataset.tip = `Entre ${fmtValue(s.min)} y ${fmtValue(s.max)}`;
       input.addEventListener("input", () => {
         const n = input.value === "" ? NaN : Number(input.value);
         const ok = Number.isFinite(n) && n >= s.min && n <= s.max && (s.type !== "int" || Number.isInteger(n));
@@ -327,7 +327,7 @@ const settingsView = (() => {
       row.dataset.check = c.check;
       row.innerHTML = `<span class="cred-name"><span class="label"></span><span class="cred-detail"></span></span>
         <span class="state-tag none">sin chequear</span>
-        <span class="cmd"><code></code><button class="icon-btn copy-cmd" title="Copiar el comando" aria-label="Copiar el comando">${ICONS.copy}</button></span>`;
+        <span class="cmd"><code></code><button class="icon-btn copy-cmd" data-tip="Copiar el comando" aria-label="Copiar el comando">${ICONS.copy}</button></span>`;
       $(".label", row).textContent = c.label;
       $(".cmd code", row).textContent = c.cmd;
       $(".copy-cmd", row).addEventListener("click", async (e) => {
@@ -372,7 +372,7 @@ const settingsView = (() => {
       tagEl.className = `state-tag ${worst.status}`;
       tagEl.textContent = words[worst.status] || worst.status;
       detail.textContent = worst.detail;
-      detail.title = checks.map((c) => c.detail).join("\n");
+      detail.dataset.tip = checks.map((c) => c.detail).join("\n");
     });
     const when = $(".section-foot .when", el);
     if (when) when.textContent = h ? `Último chequeo ${relTime(h.ts)}. Equivale a casebook doctor, sin reparar túneles.` : "Todavía no hay chequeos.";

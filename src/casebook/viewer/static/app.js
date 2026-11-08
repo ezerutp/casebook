@@ -41,6 +41,10 @@ const ICONS = {
   close: svg('<path d="M6 6l12 12M18 6 6 18"/>'),
   trash: svg('<path d="M4 7h16M6 7l1 13h10l1-13M9 7V4h6v3"/>'),
   slack: svg('<path d="M10 3 8 21M16 3l-2 18M4 8.5h16M3.5 15.5h16"/>'),
+  ok: svg('<circle cx="12" cy="12" r="9"/><path d="m8 12.5 2.7 2.7L16 9.8"/>'),
+  fail: svg('<circle cx="12" cy="12" r="9"/><path d="m9 9 6 6M15 9l-6 6"/>'),
+  unknown: svg('<circle cx="12" cy="12" r="9"/><path d="M9.6 9.5a2.5 2.5 0 0 1 4.8 1c0 1.7-2.4 2-2.4 3.5M12 17h.01"/>'),
+  chevron: svg('<path d="m9 6 6 6-6 6"/>'),
   spark: svg('<path d="M12 3l1.8 5.2L19 10l-5.2 1.8L12 17l-1.8-5.2L5 10l5.2-1.8z"/><path d="M19 15.5l.7 1.8 1.8.7-1.8.7-.7 1.8-.7-1.8-1.8-.7 1.8-.7z"/>'),
 };
 const SERVICES = { os: "OpenSearch", cw: "CloudWatch", db: "MySQL" };
@@ -208,12 +212,13 @@ function renderSessions() {
         const err = document.createElement("span");
         err.className = "err";
         err.textContent = `${s.errors} ✗`;
-        err.title = `${s.errors} consulta${s.errors > 1 ? "s" : ""} con error o rechazada${s.errors > 1 ? "s" : ""}`;
+        err.dataset.tip = `${s.errors} consulta${s.errors > 1 ? "s" : ""} con error o rechazada${s.errors > 1 ? "s" : ""}`;
         $(".name", a).append(err);
       }
       const card = s.card && s.card !== s.name ? s.card + " · " : "";
       $(".sub", a).textContent = `${card}${s.events} eventos · ${relTime(s.last_event_at || s.created_at)}`;
-      a.title = `Abierta ${dateFmt.format(new Date(s.created_at))}`;
+      a.dataset.tipPlace = "right";
+      a.dataset.tip = `Abierta ${dateFmt.format(new Date(s.created_at))}`;
       return a;
     })
   );
@@ -278,7 +283,7 @@ function renderSlackError(err, { retry } = {}) {
   $("strong", box).textContent = e.title;
   const count = $(".slack-alert-count", box);
   count.textContent = e.count > 1 ? `×${e.count}` : "";
-  count.title = e.count > 1 ? `Pasó ${e.count} veces seguidas` : "";
+  count.dataset.tip = e.count > 1 ? `Pasó ${e.count} veces seguidas` : "";
   if (e.hint) {
     const hint = document.createElement("p");
     hint.className = "slack-alert-hint";
@@ -340,7 +345,7 @@ function slackCard(ev, p) {
       const files = node("div", "slack-files");
       p.files.forEach((f) => {
         const chip = node("span", "slack-file", f.name || f.id);
-        chip.title = [f.id, f.mimetype].filter(Boolean).join(" · ");
+        chip.dataset.tip = [f.id, f.mimetype].filter(Boolean).join(" · ");
         files.append(chip);
       });
       body.append(files);
@@ -445,7 +450,7 @@ function linkQueryIds(el, text) {
     const pill = document.createElement("button");
     pill.type = "button";
     pill.className = `query-ref${card.svc ? ` svc-${card.svc}` : ""}`;
-    pill.title = `${$(".purpose", card.el).textContent} · ${id}`;
+    pill.dataset.tip = `${$(".purpose", card.el).textContent} · ${id}`;
     pill.innerHTML = `<span class="svc-icon" aria-hidden="true">${ICONS[card.svc] || ""}</span><span class="ref-tool"></span><span class="ref-id"></span>`;
     $(".ref-tool", pill).textContent = $(".tool", card.el).textContent;
     $(".ref-id", pill).textContent = id.slice(0, 7);
@@ -695,9 +700,9 @@ function renderHead() {
   // El número sirve para decirle al agente (en el chat) sobre qué sesión trabajar.
   const sid = $(".session-id", head);
   sid.textContent = `#${session.id}`;
-  sid.title = `Número de la sesión. Úsalo para pedirle al agente que trabaje sobre esta sesión en concreto, `
+  sid.dataset.tip = `Número de la sesión. Úsalo para pedirle al agente que trabaje sobre esta sesión en concreto, `
     + `por ejemplo: «re-analiza la sesión ${session.id} de casebook más a profundidad».`;
-  sid.setAttribute("aria-label", `Sesión ${session.id}. ${sid.title}`);
+  sid.setAttribute("aria-label", `Sesión ${session.id}. ${sid.dataset.tip}`);
   const jiraLink = $(".open-card", head);
   jiraLink.hidden = !(state.meta.jira_base_url && session.card);
   if (!jiraLink.hidden) jiraLink.href = state.meta.jira_base_url + encodeURIComponent(session.card);
@@ -885,7 +890,7 @@ function renderSummary() {
       li.className = `svc-${s.svc}`;
       li.innerHTML = `<span class="svc-icon" aria-hidden="true">${ICONS[s.svc]}</span><span class="src"></span><span class="n"></span>`;
       $(".src", li).textContent = s.name;
-      $(".src", li).title = s.name;
+      $(".src", li).dataset.tip = s.name;
       $(".n", li).innerHTML = s.errors ? `${s.total} · <span class="bad">${s.errors} ✗</span>` : String(s.total);
       return li;
     })
@@ -1162,7 +1167,7 @@ function queryCard(ev, p) {
   if (svc) {
     el.classList.add(`svc-${svc}`);
     $(".svc-icon", el).innerHTML = ICONS[svc];
-    $(".svc-icon", el).title = SERVICES[svc];
+    $(".svc-icon", el).dataset.tip = SERVICES[svc];
   }
   $(".tool", el).textContent = p.tool;
   const env = p.params?.env;
@@ -1171,7 +1176,7 @@ function queryCard(ev, p) {
     pill.hidden = false;
     pill.textContent = env.toUpperCase();
     pill.dataset.tone = envTone(env);
-    pill.title = `Entorno ${env}`;
+    pill.dataset.tip = `Entorno ${env}`;
   }
   $(".purpose", el).textContent = p.purpose || "consulta";
   $("time", el).textContent = timeFmt.format(new Date(ev.ts));
@@ -1417,21 +1422,73 @@ function renderHealth(h) {
     });
   }
   const words = { ok: "ok", warn: "aviso", fail: "falla", unknown: "sin chequear" };
+  const icons = { ok: ICONS.ok, warn: ICONS.warn, fail: ICONS.fail, unknown: ICONS.unknown };
+  const items = [...worst.values()];
   list.replaceChildren(
-    ...[...worst.values()].map((c) => {
+    ...items.map((c) => {
       const li = document.createElement("li");
       li.className = c.status;
-      li.title = c.details.join("\n");
-      li.innerHTML = `<span class="dot"></span><span class="name"></span><span class="state"></span>`;
+      li.dataset.tipPlace = "right";
+      li.dataset.tipTitle = connName(c.name);
+      li.dataset.tipStatus = c.status;
+      li.dataset.tipStatusLabel = words[c.status] || c.status;
+      li.dataset.tip = c.details.filter(Boolean).join("\n");
+      li.innerHTML = `<span class="conn-icon" aria-hidden="true"></span><span class="name"></span><span class="state"></span>`;
+      $(".conn-icon", li).innerHTML = icons[c.status] || ICONS.unknown;
       $(".name", li).textContent = connName(c.name);
+      // «ok» ya lo dice el ícono; el texto queda para quien lee con lector de pantalla.
       $(".state", li).textContent = words[c.status] || c.status;
+      if (c.status === "ok") $(".state", li).classList.add("sr-only");
       return li;
     })
   );
+  connPanel.update(items);
   $("#conn-when").textContent = h ? relTime(h.ts) : "";
-  $("#conn-when").title = h ? dateFmt.format(new Date(h.ts)) : "";
+  $("#conn-when").dataset.tip = h ? `Último chequeo: ${dateFmt.format(new Date(h.ts))}` : "";
   if (typeof settingsView !== "undefined") settingsView.onHealth(h);
 }
+
+// Panel de conexiones plegable. Si todo está ok se pliega solo y deja un resumen («7 ok»); si algo falla o
+// avisa se despliega. Si el ingeniero lo abre o cierra a mano se respeta hasta que cambie el estado.
+const connPanel = (() => {
+  const toggle = $("#conn-toggle");
+  const body = $("#conn-body");
+  const summary = $("#conn-summary");
+  $(".conn-chevron", toggle).innerHTML = ICONS.chevron;
+  let signature = null; // estado de todos los sistemas; si cambia, vuelve el modo automático
+  let manual = null;    // true/false si el ingeniero lo tocó
+
+  function setOpen(open) {
+    toggle.setAttribute("aria-expanded", String(open));
+    body.hidden = !open;
+    toggle.closest(".conn-panel").classList.toggle("collapsed", !open);
+  }
+
+  toggle.addEventListener("click", () => {
+    manual = toggle.getAttribute("aria-expanded") !== "true";
+    setOpen(manual);
+  });
+
+  function update(items) {
+    const count = (st) => items.filter((c) => c.status === st).length;
+    const bad = count("fail"), warn = count("warn"), unknown = count("unknown"), ok = count("ok");
+    const parts = [];
+    if (bad) parts.push(`<span class="sum fail">${ICONS.fail}${bad}</span>`);
+    if (warn) parts.push(`<span class="sum warn">${ICONS.warn}${warn}</span>`);
+    if (unknown) parts.push(`<span class="sum unknown">${ICONS.unknown}${unknown}</span>`);
+    if (ok) parts.push(`<span class="sum ok">${ICONS.ok}${ok}</span>`);
+    summary.innerHTML = parts.join("");
+    summary.dataset.tip = [bad && `${bad} con falla`, warn && `${warn} con aviso`, unknown && `${unknown} sin chequear`, ok && `${ok} ok`]
+      .filter(Boolean).join("\n");
+
+    const sig = items.map((c) => `${c.name}:${c.status}`).join("|");
+    if (sig !== signature) { signature = sig; manual = null; }
+    const healthy = items.length > 0 && ok === items.length;
+    setOpen(manual ?? !healthy);
+  }
+
+  return { update, expand: () => setOpen(true) };
+})();
 
 // Corre doctor en el servidor (sin reparar túneles). Lo usan el panel lateral y Ajustes.
 let rechecking = null;
