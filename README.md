@@ -99,6 +99,7 @@ En modo desarrollo no hacen falta: basta `git pull`.
 
 | Comando | Qué hace |
 |---|---|
+| `casebook --version` / `casebook -v` | Muestra la versión instalada de casebook |
 | `casebook setup [--gui \| --consola] [--preview]` | Abre el asistente de configuración |
 | `casebook update` / `casebook update-dev` | Actualiza la instalación local (ver [Actualizar](#actualizar)) |
 | `casebook doctor [--requisitos]` | Revisa requisitos y conexiones, y repara túneles. `--requisitos`: solo la máquina, sin probar sesiones |

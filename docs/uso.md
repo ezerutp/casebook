@@ -110,6 +110,7 @@ a ejecutar consultas ni garantiza que esos datos sigan vigentes.
 
 | Comando | Qué hace |
 |---|---|
+| `casebook --version` / `casebook -v` | Muestra la versión instalada de casebook |
 | `casebook doctor` | **Requisitos** (ssh, los hosts de tus fuentes, que el servidor SSH responda, credenciales de la base, alias del pack, keyring) y **conexiones** (repara túneles, verifica sesiones). `--requisitos` para solo la primera parte |
 | `casebook viewer` (o `start`) | Abre el visor para ver las sesiones, viejas o en vivo, sin necesidad de Claude Code. Si ya hay uno corriendo, abre ese |
 | `casebook stop` | Detiene el visor abierto con `viewer`/`start` (igual que Ctrl-C en su terminal). Si el visor lo sirve Claude Code no lo toca: ese se cierra con su sesión |
