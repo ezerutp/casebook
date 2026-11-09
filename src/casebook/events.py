@@ -105,6 +105,10 @@ class NoActiveSession(Exception):
     """Algo se iba a registrar sin sesión activa y el Recorder no abre sesiones solo."""
 
 
+# Tipo de evento del avance de un análisis automático (Recorder.progress): el visor lo dibuja en vivo y el resto lo
+# ignora (no cuenta como evento de la sesión ni sale en session_read).
+PROGRESS = "slack.progress"
+
 class Recorder:
     def __init__(self, store: Store):
         self.store = store
@@ -145,6 +149,11 @@ class Recorder:
 
     def note(self, text: str) -> dict[str, Any]:
         return self._emit("note", {"text": text})
+
+    def progress(self, phase: str, **extra: Any) -> dict[str, Any]:
+        """El avance de un análisis automático en curso: "start", cada "step" (qué tool usó y sobre qué) y "end".
+        Va aparte de los eventos de Slack para no mezclarse con el hilo, el export ni la búsqueda."""
+        return self._emit(PROGRESS, {"phase": phase, **extra})
 
     def slack(self, kind: str, text: str, **extra: Any) -> dict[str, Any]:
         """Lo que deja la vigilancia de Slack: el mensaje ("message"), el análisis ("analysis") o por qué no se

@@ -61,6 +61,11 @@ lo trae el pack, y los demás ajustes están en **Ajustes → Slack**). Mientras
   escalar con una card, qué información falta…), su **evidencia** (cada hallazgo enlaza a su consulta), la
   **confianza**, lo **descartado** y una respuesta sugerida corta para pegar en el hilo, coherente con lo que
   preguntó la persona. Llega una notificación de escritorio.
+- **Mientras analiza** se ve en vivo: en la sesión, una tarjeta con lo que está haciendo ahora («Leyendo el hilo
+  de Slack», «Leyendo código: …», «MySQL: …» o «Pensando»), el recorrido de pasos y el tiempo; en el panel de
+  Slack, de quién es el mensaje, el tiempo y cuántos hay en cola; y en la lista, la sesión marcada. Al terminar,
+  la tarjeta queda como «Análisis listo · 3 min 11 s» con los pasos plegados. Muestra qué herramienta usó y sobre
+  qué, no el razonamiento del modelo.
 - Los hilos analizados se siguen una semana: si alguien responde y el autor vuelve a preguntar, esa repregunta se
   analiza **en la misma sesión** que el mensaje principal: el análisis lee la conclusión anterior y dice si cambia.
 - **Revisar respuestas del hilo** (botón en la cabecera de una sesión de Slack): lee las respuestas del hilo
@@ -75,6 +80,11 @@ lo trae el pack, y los demás ajustes están en **Ajustes → Slack**). Mientras
 - **Analizar el último mensaje** (botón del panel) busca el último mensaje de una persona en el canal y lo analiza,
   aunque la vigilancia esté apagada. Si ese mensaje ya está analizado o en curso, no lo repite: te lleva a esa
   sesión. Sí reintenta uno que falló o que quedó sin analizar por el tope.
+- **Elegir un mensaje…** (botón del panel) abre una ventana para escoger qué mensaje analizar: eliges el día (hoy por
+  defecto; con flechas o el calendario), el visor lee los mensajes de ese día (lo hace Claude por el conector: tarda
+  unos 15 a 40 segundos; un día pasado queda guardado) y cada uno muestra su estado. «Analizar» lo encola como
+  cualquier pedido; uno ya analizado ofrece «Ver sesión» y «Reanalizar», que lo vuelve a investigar completo en la
+  misma sesión y dice si cambia la conclusión. «Solo pedidos» oculta avisos y agradecimientos.
 - **Errores:** el panel muestra un título corto y qué hacer («El conector de Slack no está disponible» → `/mcp` →
   claude.ai Slack → Authenticate; «No encontré el canal» → revisa el ID en Ajustes), con el detalle técnico en «Ver
   detalle» y un contador si se repite. «Reintentar» vuelve a leer el canal. Si el conector no está autorizado, no se

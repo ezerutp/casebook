@@ -208,6 +208,13 @@ function renderSessions() {
       if (s.id === state.current) a.setAttribute("aria-current", "page");
       a.innerHTML = `<span class="name"><span class="label"></span></span><span class="sub"></span>`;
       $(".label", a).textContent = s.name;
+      if (s.id === state.analyzingSession) {
+        a.classList.add("analyzing");
+        const orb = document.createElement("span");
+        orb.className = "run-orb";
+        orb.dataset.tip = "El análisis automático está trabajando en esta sesión";
+        $(".name", a).prepend(orb);
+      }
       if (s.errors) {
         const err = document.createElement("span");
         err.className = "err";
@@ -315,6 +322,143 @@ function renderSlackError(err, { retry } = {}) {
 // Lo que deja la vigilancia de Slack. El mensaje del canal (y una repregunta) es la entrada del caso y va en el
 // filtro Slack; el análisis es la conclusión, como una nota de Claude, y va en Notas; un análisis que falló o quedó
 // sin hacer por el tope sigue en Slack.
+// --- análisis automático en curso -------------------------------------------------------------------------
+// El motor deja en la sesión el avance de cada análisis (slack.progress: start, cada paso y end). Aquí se arma una
+// tarjeta que lo muestra en vivo: qué está haciendo ahora, el recorrido de pasos y el tiempo; al terminar se pliega.
+const runCard = (() => {
+  const ICON = { slack: "slack", skill: "skills", code: "terminal", jira: "link", note: "note", knowledge: "db",
+    os: "os", db: "db", cw: "cw", docs: "link", write: "draft", review: "refresh", tool: "terminal" };
+  const EFFORT = { low: "bajo", medium: "medio", high: "alto", xhigh: "muy alto", max: "máximo" };
+  const STALE_MS = 25 * 60_000; // sin noticias en este tiempo, el análisis se cortó (por ejemplo, se cerró el visor)
+  const FOLD_KEY = "casebook.runFolded"; // si la última vez la compactaste, la próxima arranca compacta
+  let run = null;
+
+  const prefersFolded = () => {
+    try {
+      return localStorage.getItem(FOLD_KEY) === "1";
+    } catch {
+      return false;
+    }
+  };
+  const rememberFolded = (folded) => {
+    try {
+      localStorage.setItem(FOLD_KEY, folded ? "1" : "0");
+    } catch {}
+  };
+
+  const clock = (ms) => {
+    const s = Math.max(0, Math.round(ms / 1000));
+    return `${Math.floor(s / 60)}:${String(s % 60).padStart(2, "0")}`;
+  };
+  const span = (s) => (s < 60 ? `${s} s` : `${Math.floor(s / 60)} min ${String(s % 60).padStart(2, "0")} s`);
+
+  function start(ev, p, live) {
+    const el = document.createElement("li");
+    el.className = "card run running";
+    el.dataset.key = `e${ev.id}`;
+    el.dataset.kind = "slack";
+    el.innerHTML = `<div class="card-head"><span class="run-orb" aria-hidden="true"></span><span class="purpose"></span>
+        <span class="run-meta"></span><time class="run-clock"></time>
+        <button class="icon-btn run-fold" aria-expanded="true">${ICONS.chevron}</button></div>
+      <div class="run-now" aria-live="polite"><span class="run-now-label">Ahora</span><span class="run-now-text"></span>
+        <span class="run-dots" aria-hidden="true"><i></i><i></i><i></i></span><span class="run-count"></span></div>
+      <ol class="run-steps"></ol>
+      <button class="link-btn run-toggle" hidden></button>`;
+    $(".purpose", el).textContent = `Analizando ${p.follow_up ? "la repregunta" : "el mensaje"} de ${p.author || "Slack"}`;
+    $(".run-meta", el).textContent = [p.model, EFFORT[p.effort] && `esfuerzo ${EFFORT[p.effort]}`].filter(Boolean).join(" · ");
+    const current = { el };
+    const fold = (folded, remember) => {
+      el.classList.toggle("folded", folded);
+      $(".run-fold", el).setAttribute("aria-expanded", String(!folded));
+      $(".run-fold", el).dataset.tip = folded ? "Ver los pasos" : "Compactar";
+      // Solo se recuerda lo que eliges mientras corre: el plegado al terminar es automático.
+      if (remember && !current.run?.done) rememberFolded(folded);
+      if (current.run) toggleLabel(current.run);
+    };
+    $(".run-fold", el).addEventListener("click", () => fold(!el.classList.contains("folded"), true));
+    $(".run-toggle", el).addEventListener("click", () => fold(!el.classList.contains("folded"), true));
+    run = current.run = { el, fold, start: Date.parse(ev.ts), last: Date.parse(ev.ts), steps: 0, done: false };
+    fold(prefersFolded(), false);
+    now("Leyendo el pedido", true);
+    // Al repasar el historial, el reloj de ahora no dice nada de una corrida vieja: sin esto, toda tarjeta de más de
+    // 25 min se daba por cortada antes de leer sus pasos y su final.
+    if (live) tick();
+    prepend(el, live);
+  }
+
+  function now(text, thinking) {
+    $(".run-now-text", run.el).textContent = text;
+    run.el.classList.toggle("thinking", !!thinking);
+  }
+
+  function step(ev, p) {
+    if (p.icon === "think") return now("Pensando", true);
+    const li = document.createElement("li");
+    li.className = `run-step i-${p.icon}`;
+    li.innerHTML = `<span class="run-ico" aria-hidden="true"></span><span class="txt"></span><time class="at"></time>`;
+    $(".run-ico", li).innerHTML = ICONS[ICON[p.icon]] || ICONS.terminal;
+    $(".txt", li).textContent = p.text;
+    $(".at", li).textContent = clock(run.last - run.start);
+    const list = $(".run-steps", run.el);
+    $(".now", list)?.classList.remove("now");
+    if (!run.done) li.classList.add("now");
+    list.append(li);
+    list.scrollTop = list.scrollHeight;
+    run.steps += 1;
+    $(".run-count", run.el).textContent = `${run.steps} ${run.steps === 1 ? "paso" : "pasos"}`;
+    now(p.text, false);
+  }
+
+  function finish(p) {
+    run.done = true;
+    const ok = p.status === "done";
+    run.el.classList.remove("running", "thinking");
+    run.el.classList.add(ok ? "done" : "failed");
+    $(".now", run.el)?.classList.remove("now");
+    const took = span(p.seconds ?? Math.round((run.last - run.start) / 1000));
+    $(".purpose", run.el).textContent = {
+      done: `Análisis listo · ${took}`,
+      error: `El análisis se cortó a los ${took}`,
+      interrupted: "El análisis se interrumpió al cerrar el visor",
+      stale: "Sin noticias del análisis: se habrá cortado",
+    }[p.status] || `Análisis terminado · ${took}`;
+    $(".run-clock", run.el).textContent = `${run.steps} ${run.steps === 1 ? "paso" : "pasos"}`;
+    $(".run-toggle", run.el).hidden = !run.steps;
+    $(".run-fold", run.el).hidden = !run.steps;
+    run.fold(true, false); // terminado, queda plegado: lo que importa ahora es la conclusión
+  }
+
+  function toggleLabel(r) {
+    const folded = r.el.classList.contains("folded");
+    $(".run-toggle", r.el).textContent = folded ? `Ver los ${r.steps} pasos` : "Ocultar los pasos";
+  }
+
+  function tick() {
+    if (!run || run.done) return;
+    if (Date.now() - run.last > STALE_MS) return finish({ status: "stale" });
+    $(".run-clock", run.el).textContent = clock(Date.now() - run.start);
+  }
+  setInterval(tick, 1000);
+
+  return {
+    apply(ev, p, live) {
+      if (p.phase === "start") return start(ev, p, live);
+      if (!run || run.done) return;
+      run.last = Date.parse(ev.ts);
+      if (p.phase === "step") step(ev, p);
+      else if (p.phase === "end") finish(p);
+      if (live && !run.done) tick();
+    },
+    reset() {
+      run = null;
+    },
+    // Mientras corre, la tarjeta queda primera aunque lleguen consultas: es lo que se mira.
+    pinned() {
+      return run && !run.done ? run.el : null;
+    },
+  };
+})();
+
 const SLACK_TITLES = { analysis: "Conclusión del análisis de Slack", skipped: "Sin analizar", error: "El análisis automático falló" };
 
 function slackCard(ev, p) {
@@ -553,12 +697,14 @@ function resetSessionState() {
   draftHistory.close();
   state.sources = new Map();
   state.filter = { kind: "all", text: "" };
+  runCard.reset();
 }
 
 async function openSession(id) {
   if (cardModal.open) cardModal.close();
   state.current = id;
   resetSessionState();
+  threadCheck.reset();
   $("#timeline").replaceChildren();
   renderSessions();
   renderSummary();
@@ -574,13 +720,11 @@ async function openSession(id) {
   head.innerHTML = `<div class="head-row">
       <div class="titles"><h2><span class="session-id" tabindex="0"></span><span class="title"></span><span class="badge running" hidden></span></h2><p></p></div>
       <div class="session-actions">
-        <button class="thread-check" hidden><span class="btn-icon" data-icon="slack"></span><span class="label">Revisar respuestas del hilo</span></button>
         <a class="btn open-card" target="_blank" rel="noopener" hidden><span class="btn-icon" data-icon="external"></span>Abrir card</a>
         <button class="copy-md"><span class="btn-icon" data-icon="copy"></span><span>Copiar Markdown</span></button>
         <a class="btn" href="/api/sessions/${id}/export.md?download=true"><span class="btn-icon" data-icon="download"></span>Descargar .md</a>
       </div>
     </div>
-    <div class="thread-status" aria-live="polite" hidden></div>
     <div class="stats" aria-label="Llamadas por servicio"></div>
     <div class="filter-row"><div class="filter-main"><div class="card-filters" role="group" aria-label="Filtrar tarjetas"></div><div class="loop-control"></div></div><div class="filter-search"></div></div>`;
   fillIcons(head);
@@ -595,13 +739,15 @@ async function openSession(id) {
     link.hidden = false;
   }
   $(".title", head).textContent = session.name;
-  $(".thread-check", head).addEventListener("click", () => threadCheck.start(id));
   renderFilters();
   renderHead();
 
   const events = await fetch(`/api/sessions/${id}/events`).then((r) => r.json());
   if (state.current !== id) return;
   events.forEach((ev) => applyEvent(ev, false));
+  // Un análisis que sigue en curso va primero también al abrir la sesión, no solo con los eventos en vivo.
+  const running = runCard.pinned();
+  if (running) $("#timeline").prepend(running);
   renderHead();
   renderSummary();
   focusCard(cardKeyFromHash());
@@ -609,39 +755,43 @@ async function openSession(id) {
 }
 
 // «Revisar respuestas del hilo» en una sesión que viene de Slack: lee lo nuevo del hilo y, si hay algo, lo analiza
-// en esta misma sesión (las tarjetas llegan por SSE como cualquier evento). Aquí solo el botón y su estado.
+// en esta misma sesión (las tarjetas llegan por SSE como cualquier evento). Aquí solo su panel de la columna derecha.
 const threadCheck = (() => {
   const BUSY = ["searching", "queued"];
+  const panel = $("#sum-thread");
   let timer = null;
+
+  function reset() {
+    clearTimeout(timer);
+    panel.hidden = true;
+    $(".thread-status", panel).hidden = true;
+  }
 
   async function load(id) {
     clearTimeout(timer);
     const body = await fetch(`/api/slack/thread/${id}`).then((r) => (r.ok ? r.json() : null), () => null);
     if (state.current !== id) return;
-    const head = $("#session-head");
-    const btn = $(".thread-check", head);
-    if (!btn) return;
-    btn.hidden = !body?.has_thread;
-    render(head, body?.check);
+    panel.hidden = !body?.has_thread;
+    syncSummary();
+    render(panel, body?.check);
     if (body?.check && BUSY.includes(body.check.status)) timer = setTimeout(() => load(id), 2000);
   }
 
   async function start(id, force = false) {
-    const head = $("#session-head");
-    render(head, { status: "searching", at: Date.now() / 1000 });
+    render(panel, { status: "searching", at: Date.now() / 1000 });
     const r = await action(`/api/slack/thread/${id}/check${force ? "?force=true" : ""}`);
     if (!r.ok && r.status !== 409) {
       const body = await r.json().catch(() => ({}));
-      render(head, { status: "error", at: Date.now() / 1000, error: { code: "other", title: "No se pudo revisar el hilo",
+      render(panel, { status: "error", at: Date.now() / 1000, error: { code: "other", title: "No se pudo revisar el hilo",
         hint: "", detail: typeof body.detail === "string" ? body.detail : `HTTP ${r.status}`, at: Date.now() / 1000 } });
       return;
     }
     load(id);
   }
 
-  function render(head, check) {
-    const btn = $(".thread-check", head);
-    const box = $(".thread-status", head);
+  function render(where, check) {
+    const btn = $(".thread-check", where);
+    const box = $(".thread-status", where);
     if (!btn || !box) return;
     const busy = !!check && BUSY.includes(check.status);
     btn.disabled = busy;
@@ -682,7 +832,8 @@ const threadCheck = (() => {
     if (!busy) box.append(Object.assign(document.createElement("span"), { className: "when", textContent: ` · ${relTime(check.at * 1000)}` }));
   }
 
-  return { load, start };
+  $(".thread-check", panel).addEventListener("click", () => threadCheck.start(state.current));
+  return { reset, load, start };
 })();
 
 // --- cabecera: título, contadores y filtros ---------------------------------------------------------------
@@ -950,7 +1101,6 @@ function markSourceErrors(list) {
 }
 
 function renderSummary() {
-  const box = $("#summary");
   const notes = $("#sum-notes");
   notes.hidden = !state.notes.length;
   $(".sum-notes", notes).replaceChildren(
@@ -984,7 +1134,12 @@ function renderSummary() {
       return li;
     })
   );
-  box.hidden = notes.hidden && draft.hidden && sources.hidden;
+  syncSummary();
+}
+
+// La columna derecha aparece si tiene algún panel visible (el del hilo de Slack puede ser el único).
+function syncSummary() {
+  $("#summary").hidden = [...$("#summary").children].every((panel) => panel.hidden);
 }
 
 // El borrador está en markdown: Jira y Slack lo necesitan con formato (HTML) para no mostrar los ** literales.
@@ -1027,6 +1182,9 @@ function applyEvent(ev, live = true) {
       add(el);
       break;
     }
+    case "slack.progress":
+      runCard.apply(ev, p, live);
+      break;
     case "slack": {
       const el = slackCard(ev, p);
       // El análisis es la conclusión de la sesión, como una nota de Claude: va al panel de Conclusiones.
@@ -1295,6 +1453,8 @@ function prepend(el, live) {
   const reading = window.scrollY > 120;
   const before = document.documentElement.scrollHeight;
   timeline.prepend(el);
+  const running = runCard.pinned();
+  if (live && running && running !== el) timeline.prepend(running);
   if (reading) window.scrollBy(0, document.documentElement.scrollHeight - before);
   if (live) el.classList.add("fresh");
 }
@@ -1646,7 +1806,7 @@ function connect(after) {
           s.name = ev.payload.name;
           s.card = ev.payload.card;
         }
-        s.events += 1;
+        if (ev.type !== "slack.progress") s.events += 1;
         s.last_event_at = ev.ts;
         s.last_event_id = ev.id;
         if (ev.type === "query.failed" || ev.type === "query.rejected") s.errors += 1;
