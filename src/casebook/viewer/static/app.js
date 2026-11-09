@@ -582,7 +582,7 @@ async function openSession(id) {
     </div>
     <div class="thread-status" aria-live="polite" hidden></div>
     <div class="stats" aria-label="Llamadas por servicio"></div>
-    <div class="card-filters" role="group" aria-label="Filtrar tarjetas"></div>`;
+    <div class="filter-row"><div class="filter-main"><div class="card-filters" role="group" aria-label="Filtrar tarjetas"></div><div class="loop-control"></div></div><div class="filter-search"></div></div>`;
   fillIcons(head);
   $(".copy-md", head).addEventListener("click", async (e) => {
     const md = await fetch(`/api/sessions/${id}/export.md`).then((r) => r.text());
@@ -729,7 +729,94 @@ function renderHead() {
   tiles.push(statTile("clock", "Duración", esc(dur), false));
   $(".stats", head).replaceChildren(...tiles);
   updateFilterCounts();
+  renderLoop();
   sizeHead();
+}
+
+function renderLoop() {
+  const box = $("#session-head .loop-control");
+  const session = currentSession();
+  if (!box || !session) return;
+  const s = session.loop;
+  if (!s) { box.replaceChildren(); return; }
+  const terminal = ["completed", "stopped"].includes(s.status);
+  const progress = s.current ? `${terminal ? s.completed : s.current}/${s.maximum}` : "";
+  // Closed without ever starting a round (loop off at close): it never ran, so it reads as Desactivado.
+  const neverRan = terminal && !s.current;
+  const label = s.status === "stopping" ? `${progress} · Deteniendo…`
+    : neverRan ? "Desactivado"
+    : terminal ? `${progress} · ${s.status === "stopped" ? "Detenido" : s.completed < s.maximum ? "Finalizado" : "Completado"}`
+    : s.status === "initial" ? (s.enabled ? "Activado" : "Desactivado") : progress;
+  const help = s.reason || (s.status === "initial"
+    ? `Hasta ${s.maximum} revisiones adicionales al finalizar. Consume más tokens. Apagarlo no interrumpe la investigación inicial.`
+    : "Revisiones adicionales, no consultas. Apagarlo solicita detenerse en el próximo punto de control.");
+  if (!$(".loop-pill", box)) box.innerHTML = `<div class="loop-pill">
+    <span class="svc-icon" aria-hidden="true"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.7" stroke-linecap="round" stroke-linejoin="round"><path d="M20 7a8 8 0 0 0-13.7-1.5L3 9m0-6v6h6M4 17a8 8 0 0 0 13.7 1.5L21 15m0 6v-6h-6"/></svg></span>
+    <span>Loop</span><span class="loop-progress" aria-live="polite"></span>
+    <button class="switch" role="switch" aria-label="Loop para esta investigación"></button></div>`;
+  const pill = $(".loop-pill", box), toggle = $("button", box);
+  pill.classList.toggle("enabled", s.enabled);
+  pill.tabIndex = terminal ? 0 : -1;
+  pill.dataset.tip = help;
+  $(".loop-progress", box).textContent = label.replace(/^ · /, "");
+  toggle.setAttribute("aria-checked", String(s.enabled));
+  toggle.setAttribute("aria-label", `Loop para esta investigación. ${label}. ${help}`);
+  toggle.disabled = terminal || box.dataset.busy === "1";
+  fitFilterRow();
+  toggle.onclick = async () => {
+    box.querySelectorAll(".loop-error").forEach((el) => el.remove());
+    box.dataset.busy = "1";
+    toggle.disabled = true;
+    try {
+      const response = await fetch(`/api/sessions/${session.id}/loop`, {method: "PUT",
+        headers: {"Content-Type": "application/json", "x-casebook-viewer": "1"},
+        body: JSON.stringify({enabled: !s.enabled, revision: s.revision})});
+      const result = await response.json();
+      if (!response.ok) throw new Error(result.detail || "No se pudo cambiar el loop");
+      if ((session.loop?.revision ?? -1) <= result.revision) session.loop = result;
+      box.dataset.busy = "0";
+      renderLoop();
+    } catch (error) {
+      box.dataset.busy = "0";
+      await loadSessions();
+      renderLoop();
+      box.querySelectorAll(".loop-error").forEach((el) => el.remove());
+      const message = document.createElement("span");
+      message.className = "loop-error"; message.setAttribute("role", "alert");
+      message.textContent = error.message; box.append(message);
+    }
+  };
+}
+
+// When the filters and the Loop pill do not fit on one line (about 1440 px wide), service filters with an
+// icon drop their name: it stays for screen readers and as a tooltip. Measured, not a fixed breakpoint,
+// because counts and the pill's status change the widths.
+function fitFilterRow() {
+  const row = $("#session-head .filter-row");
+  const filters = $("#session-head .card-filters");
+  const loop = $("#session-head .loop-control");
+  if (!row || !filters) return;
+  const wraps = () => {
+    const chips = [...filters.children];
+    const top = chips[0]?.offsetTop ?? 0;
+    return chips.some((c) => c.offsetTop !== top) || (loop?.childElementCount && loop.offsetTop > filters.offsetTop + 4);
+  };
+  row.classList.remove("compact");
+  const compact = wraps();
+  row.classList.toggle("compact", compact);
+  filters.querySelectorAll(".chip-filter").forEach((b) => {
+    if (compact && b.querySelector(".svc-icon")) b.dataset.tip = b.dataset.label;
+    else delete b.dataset.tip;
+  });
+}
+
+let filterRowObserver = null;
+function watchFilterRow() {
+  const main = $("#session-head .filter-main");
+  if (!main) return;
+  filterRowObserver?.disconnect();
+  filterRowObserver = new ResizeObserver(() => fitFilterRow());
+  filterRowObserver.observe(main);
 }
 
 function statTile(icon, label, valueHtml, idle) {
@@ -759,14 +846,13 @@ function renderFilters() {
       b.className = `chip-filter svc-${kind}`;
       b.dataset.kind = kind;
       b.setAttribute("aria-pressed", String(state.filter.kind === kind));
-      b.innerHTML = `${icon ? `<span class="svc-icon" aria-hidden="true">${ICONS[icon]}</span>` : ""}<span></span> <span class="count"></span>`;
+      b.innerHTML = `${icon ? `<span class="svc-icon" aria-hidden="true">${ICONS[icon]}</span>` : ""}<span class="chip-label"></span> <span class="count"></span>`;
+      b.dataset.label = label;
       b.children[icon ? 1 : 0].textContent = label;
       b.addEventListener("click", () => setKindFilter(state.filter.kind === kind ? "all" : kind));
       return b;
     })
   );
-  const spacer = document.createElement("span");
-  spacer.className = "spacer";
   const input = document.createElement("input");
   input.type = "search";
   input.className = "card-search";
@@ -776,7 +862,9 @@ function renderFilters() {
     state.filter.text = input.value.trim().toLowerCase();
     applyFilters();
   });
-  box.append(spacer, input);
+  $("#session-head .filter-search").replaceChildren(input);
+  watchFilterRow();
+  renderLoop();
   updateFilterCounts();
 }
 
@@ -803,6 +891,7 @@ function updateFilterCounts() {
     $(".count", b).textContent = n;
     b.disabled = !n && b.dataset.kind !== "all" && state.filter.kind !== b.dataset.kind;
   });
+  fitFilterRow();  // a longer count can push the pill to a second line
 }
 
 function cardMatches(el) {
@@ -920,6 +1009,12 @@ function applyEvent(ev, live = true) {
   let summary = false;
 
   switch (ev.type) {
+    case "loop.updated": {
+      const session = currentSession();
+      if (session && (!session.loop || session.loop.revision <= p.loop.revision)) session.loop = p.loop;
+      renderLoop();
+      break;
+    }
     case "note": {
       const el = $("#tpl-note").content.firstElementChild.cloneNode(true);
       el.dataset.key = `e${ev.id}`;
@@ -1492,6 +1587,7 @@ const connPanel = (() => {
 
 // Corre doctor en el servidor (sin reparar túneles). Lo usan el panel lateral y Ajustes.
 let rechecking = null;
+let recheckFailed = false; // el reloj de «hace N min» no pisa el «falló»
 function recheckHealth() {
   if (rechecking) return rechecking;
   const btn = $("#recheck");
@@ -1499,15 +1595,24 @@ function recheckHealth() {
   btn.classList.add("spinning");
   $("#conn-when").textContent = "revisando…";
   rechecking = (async () => {
+    let failed = null;
     try {
       const r = await action("/api/health");
-      renderHealth(r.ok ? await r.json() : health);
-    } catch {
-      renderHealth(health);
+      if (r.ok) renderHealth(await r.json());
+      else failed = `el servidor respondió HTTP ${r.status}`;
+    } catch (err) {
+      failed = `no hubo respuesta del visor (${err.message || err})`;
     } finally {
       btn.disabled = false;
       btn.classList.remove("spinning");
       rechecking = null;
+    }
+    recheckFailed = Boolean(failed);
+    if (failed) {
+      // Sin esto el panel se quedaba con el chequeo viejo y parecía que el botón no hacía nada.
+      renderHealth(health);
+      $("#conn-when").textContent = "falló";
+      $("#conn-when").dataset.tip = `No se pudo revisar: ${failed}`;
     }
   })();
   return rechecking;
@@ -1536,6 +1641,7 @@ function connect(after) {
     } else {
       const s = state.sessions.find((x) => x.id === ev.session_id);
       if (s) {
+        if (ev.type === "loop.updated" && (!s.loop || s.loop.revision <= ev.payload.loop.revision)) s.loop = ev.payload.loop;
         if (ev.type === "session.updated") {
           s.name = ev.payload.name;
           s.card = ev.payload.card;
@@ -1606,7 +1712,7 @@ window.addEventListener("hashchange", route);
 setInterval(() => {
   renderSessions();
   renderHead();
-  if (health && !rechecking) $("#conn-when").textContent = relTime(health.ts);
+  if (health && !rechecking && !recheckFailed) $("#conn-when").textContent = relTime(health.ts);
 }, 30_000);
 
 // --- búsqueda entre sesiones -----------------------------------------------------------------------------

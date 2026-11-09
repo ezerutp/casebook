@@ -155,7 +155,7 @@ escalation = "ticket"                  # el resultado que pide una card (el aná
 escalation_label = "Ticket"
 reply_style = "en español, lista para pegar en el hilo"  # el análisis ya la pide corta (2 a 4 frases, o una lista si hay varias preguntas); esto fija idioma y tono
 investigation_skill = "acme-investigation"  # opcional: la skill de investigación (método y recetas) que también carga
-max_queries = 20                       # tope de consultas a las fuentes por análisis
+max_queries = 20                       # tope de consultas por análisis (Ajustes → Slack → Consultas por análisis)
 allowed_tools = ["mcp__claude_ai_Acme__search_docs"]  # tools extra de solo lectura (documentación); nombres exactos
 
 [slack.triage.outcomes]                # los resultados posibles y cómo se muestran
@@ -210,3 +210,14 @@ lo almacenado del log group y se supone que se reparte parejo en el tiempo que c
 Un plugin suma proveedores con un entry point del grupo `casebook.providers` que apunta a la clase (con
 `kind`, `name`, `auth`, `fields` y los métodos de `providers/base.py`). El proveedor lee sus opciones de
 `self.options` (las de su entorno); `cfg.cw_options` queda por compatibilidad y es solo el primer CloudWatch.
+
+## Loop
+
+```toml
+[loop]
+enabled = false                # preferencia para nuevas investigaciones
+max_additional_reviews = 1     # entero positivo; excluye la investigación inicial
+```
+
+Se edita en Ajustes → Loop. El máximo se copia a cada sesión al crearla; cambiarlo no altera investigaciones en
+curso. La píldora de la sesión cambia solo su habilitación y muestra el avance de las revisiones adicionales.

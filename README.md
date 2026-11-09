@@ -11,6 +11,7 @@ puedes agregar a mano.
 
 | Tool | Qué hace |
 |---|---|
+| `session_finish`, `session_review_status`, `session_review_complete`, `session_reopen` | Cierre formal y loop de revisiones adicionales, con estado y progreso en el visor; reabre una sesión cerrada si se pide más trabajo |
 | `session_start`, `session_update`, `session_note` | Agrupan las consultas de un caso y dejan conclusiones en el timeline |
 | `session_list`, `session_search`, `session_read`, `session_resume` | Buscan y recuperan investigaciones guardadas; permiten continuar la misma sesión desde otro chat |
 | `knowledge_search`, `knowledge_read`, `knowledge_record`, `knowledge_invalidate` | Memoria técnica local compartida entre investigaciones; búsqueda por fuente, entorno y tema |
@@ -98,6 +99,7 @@ En modo desarrollo no hacen falta: basta `git pull`.
 
 | Comando | Qué hace |
 |---|---|
+| `casebook --version` / `casebook -v` | Muestra la versión instalada de casebook |
 | `casebook setup [--gui \| --consola] [--preview]` | Abre el asistente de configuración |
 | `casebook update` / `casebook update-dev` | Actualiza la instalación local (ver [Actualizar](#actualizar)) |
 | `casebook doctor [--requisitos]` | Revisa requisitos y conexiones, y repara túneles. `--requisitos`: solo la máquina, sin probar sesiones |

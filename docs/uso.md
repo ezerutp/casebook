@@ -110,6 +110,7 @@ a ejecutar consultas ni garantiza que esos datos sigan vigentes.
 
 | Comando | Qué hace |
 |---|---|
+| `casebook --version` / `casebook -v` | Muestra la versión instalada de casebook |
 | `casebook doctor` | **Requisitos** (ssh, los hosts de tus fuentes, que el servidor SSH responda, credenciales de la base, alias del pack, keyring) y **conexiones** (repara túneles, verifica sesiones). `--requisitos` para solo la primera parte |
 | `casebook viewer` (o `start`) | Abre el visor para ver las sesiones, viejas o en vivo, sin necesidad de Claude Code. Si ya hay uno corriendo, abre ese |
 | `casebook stop` | Detiene el visor abierto con `viewer`/`start` (igual que Ctrl-C en su terminal). Si el visor lo sirve Claude Code no lo toca: ese se cierra con su sesión |
@@ -125,3 +126,41 @@ usa `session_update(card="SUP-1240")`: cambia el nombre y la card de la sesión 
 Para ajustar solo el nombre, usa `session_update(name="SUP-1240 · Exportación CSV")`. Cada cambio queda
 en el historial y se refleja en el visor en vivo. Para continuar una investigación, usa `session_resume`;
 una investigación separada puede usar la misma card y un nombre corto que indique el tema.
+
+## Loop de revisiones adicionales
+
+La píldora **Loop** está en la fila de filtros, alineada con el borde derecho de las tarjetas de investigación,
+antes de la columna de conclusiones. Su icono de ciclo y el switch indican si habrá revisiones adicionales.
+En **Ajustes → Loop**, configura **Máximo de revisiones adicionales** (1 por defecto) y si se habilita para
+nuevas sesiones (apagado por defecto). Las sesiones ya creadas conservan su máximo y su propia habilitación.
+Las sesiones anteriores a esta función adquieren un loop apagado al reanudarlas.
+
+Tres revisiones significa investigación inicial más hasta tres rondas, no tres consultas. Durante la revisión
+la píldora muestra **1/3**, **2/3**, **3/3**. Cada ronda puede usar varias consultas y consume tokens; los costos
+y aprobaciones existentes siguen vigentes. Puede terminar antes si no hay verificaciones útiles o falta acceso.
+
+Apagar el toggle durante la investigación inicial no la interrumpe: omite las revisiones al solicitar el cierre.
+Durante una revisión solicita detenerse en el siguiente punto de control; una consulta o llamada al modelo ya
+en curso puede terminar. **Deteniendo…** distingue esa petición de una revisión finalizada. Las consultas nuevas
+se bloquean al detener el loop, pero se conservan resultados y notas. Una investigación cerrada no se reinicia
+con el toggle.
+
+El agente llama **session_finish** antes de responder definitivamente. Si recibe `reviewing`, contrasta la
+conclusión y registra **session_review_complete** con el token de la ronda, lo confirmado/corregido, referencias
+a consultas exitosas de esa sesión y pendientes. Si recibe `pending`, **session_review_status** inicia la siguiente
+ronda leyendo el toggle vigente. Repetir el mismo token no consume otra ronda. El motivo de una terminación
+anticipada queda registrado; la aplicación valida referencias y transiciones, no la verdad de una afirmación.
+
+El servidor MCP no puede reiniciar por sí solo un agente externo que ya respondió: este protocolo depende de
+que el agente siga las instrucciones y las skills actualizadas. En Slack automático, Casebook administra las
+invocaciones adicionales. `slack.triage.max_queries` es un presupuesto global de llamadas a fuentes para el análisis
+y todas sus rondas (incluye descubrimiento y estimaciones); no se renueva en cada revisión. Se cambia en
+Ajustes → Slack → **Consultas por análisis** (20 por defecto, de 1 a 200). Las revisiones tienen
+además un plazo conjunto equivalente al timeout de análisis. Un fallo conserva el resultado provisional y
+expone la revisión incompleta. Las repreguntas explícitas inician un nuevo ciclo en la misma sesión.
+
+Si el usuario pide trabajo adicional en una investigación cerrada, `session_reopen(request_id, reason)` abre
+un nuevo ciclo en la misma sesión conservando la evidencia. El ID identifica esa petición: repetirlo es
+idempotente. `session_resume` por sí solo no reinicia el loop. Una sesión de Slack ya analizada también se
+puede continuar a mano así, sin el presupuesto automático; las repreguntas del hilo siguen su propio ciclo.
+El toggle aplica siempre el último valor elegido, aunque el análisis esté consultando en ese momento.

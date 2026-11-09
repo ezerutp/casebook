@@ -119,7 +119,16 @@ def check_system(cfg: Config, system, heal: bool = True) -> list[Check]:
     provider = systems.provider(cfg, system)
     if provider is None:
         return [Check(system.check, FAIL, systems.missing_provider_message(system))]
-    return provider.doctor_checks(heal)
+    try:
+        return provider.doctor_checks(heal)
+    except Exception as exc:  # un sistema roto no tumba el chequeo de los demás (ni el POST del visor)
+        import keyring.errors
+
+        if isinstance(exc, keyring.errors.KeyringError):
+            return [Check(system.check, FAIL, f"no pude leer el keyring ({exc.__class__.__name__}): este proceso no "
+                          "llega al llavero del sistema. Si lo lanzó otra app (p. ej. Codex), revisa que herede "
+                          "DBUS_SESSION_BUS_ADDRESS")]
+        return [Check(system.check, FAIL, f"el chequeo falló: {exc.__class__.__name__}: {exc}")]
 
 
 def run(cfg: Config, heal: bool = True) -> list[Check]:

@@ -2,6 +2,8 @@
 // Usa lo que define app.js: $, ICONS, action, esc, relTime, recheckHealth, health, applyTheme, storedTheme.
 
 const FIELDS = {
+  "loop.enabled": { label: "Activar Loop en nuevas investigaciones", help: "Las sesiones existentes conservan su propio toggle. Las revisiones adicionales consumen tokens." },
+  "loop.max_additional_reviews": { label: "Máximo de revisiones adicionales", help: "Por defecto 1. Excluye la investigación inicial. Cada ronda puede incluir varias consultas. Se aplica a nuevas sesiones.", step: 1 },
   "viewer.host": { label: "Host del visor", help: "Dónde escucha el visor. Solo direcciones locales." },
   "viewer.port": { label: "Puerto del visor", help: "Si está ocupado, el servidor asume que ya hay otro visor abierto." },
   "viewer.auto_open": { label: "Abrir el visor solo", help: "En la primera <code>session_start</code>, si no hay ninguna pestaña conectada." },
@@ -24,11 +26,13 @@ const FIELDS = {
   "slack.analysis_model": { label: "Modelo para analizar", help: "El que hace el triage de cada pedido." },
   "slack.analysis_effort": { label: "Esfuerzo del análisis", help: "Cuánto razona e investiga cada análisis antes de concluir. Más alto tarda y gasta más." },
   "slack.max_analyses_per_day": { label: "Análisis por día", help: "Pasado el tope, los pedidos quedan registrados sin analizar.", unit: "análisis" },
+  "slack.triage.max_queries": { label: "Consultas por análisis", help: "Tope de consultas a las fuentes (OpenSearch, MySQL, CloudWatch, descubrimiento y estimaciones) de cada análisis automático. Es uno solo para la investigación inicial y todas las revisiones del Loop: no se renueva por ronda.", unit: "consultas" },
   "slack.code_paths": { label: "Código local", help: "Carpetas con el código, separadas por coma. El análisis las lee <strong>solo en lectura</strong> (sin ejecutar ni modificar nada, y sin credenciales como <code>.env</code>) para entender cómo funciona algo o confirmar un posible bug. Vacío = no lee código.", placeholder: "/home/yo/repos/backend" },
   "db.max_execution_ms": { label: "Tiempo máximo de MySQL", help: "<code>MAX_EXECUTION_TIME</code> de cada consulta: la base la corta al pasarlo.", unit: "ms" },
 };
 
 const SECTIONS = [
+  { id: "loop", title: "Loop", desc: "Revisar las conclusiones antes de finalizar la investigación.", keys: ["loop.enabled", "loop.max_additional_reviews"] },
   { id: "visor", title: "Visor", desc: "Cómo se sirve y se comporta esta página.",
     keys: ["viewer.host", "viewer.port", "viewer.auto_open", "jira.base_url"] },
   { id: "guardas", title: "Guardas y costos", desc: "Límites que se revisan antes de correr una consulta. Lo que los supera pide aprobación aquí o se rechaza.",
@@ -36,7 +40,7 @@ const SECTIONS = [
       "db.default_limit", "db.max_limit", "db.full_scan_max_rows", "db.plan_max_rows", "db.max_execution_ms"] },
   { id: "slack", title: "Slack", desc: "Vigilancia del canal de soporte: solo lectura, con el conector de claude.ai.",
     keys: ["slack.watch", "slack.channel_id", "slack.channel_name", "slack.backup_poll_minutes", "slack.default_lookback_minutes",
-      "slack.ask_lookback_on_enable", "slack.poll_model", "slack.analysis_model", "slack.analysis_effort", "slack.max_analyses_per_day", "slack.code_paths"] },
+      "slack.ask_lookback_on_enable", "slack.poll_model", "slack.analysis_model", "slack.analysis_effort", "slack.max_analyses_per_day", "slack.triage.max_queries", "slack.code_paths"] },
   { id: "fuentes", title: "Fuentes", desc: "De dónde consulta Claude: las del pack del equipo y las que agregues aquí (van a tu config.toml). Una fuente nueva aparece en Claude al reiniciarlo." },
   { id: "credenciales", title: "Credenciales", desc: "El login sigue siendo en tu terminal (el prompt es oculto, no funciona con !). Aquí ves el estado y copias el comando." },
   { id: "conexiones", title: "Conexiones", desc: "Hosts y túneles. Se editan a mano en config.toml." },

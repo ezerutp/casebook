@@ -656,7 +656,11 @@ def cmd_demo(args: argparse.Namespace) -> int:
 
 
 def main(argv: list[str] | None = None) -> int:
+    from . import __version__
+
     parser = argparse.ArgumentParser(prog="casebook")
+    parser.add_argument("-v", "--version", action="version", version=f"casebook {__version__}",
+                        help="muestra la versión instalada de casebook y termina")
     sub = parser.add_subparsers(dest="cmd", required=True)
 
     sub.add_parser("mcp", help="servidor MCP por stdio (lo levanta Claude Code)").set_defaults(func=cmd_mcp)

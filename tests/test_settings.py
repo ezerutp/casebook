@@ -210,3 +210,38 @@ def test_db_select_uses_limits_saved_after_start(path, tmp_path, monkeypatch):
         call({"sql": "SELECT 3 LIMIT 50"})
     assert len(calls) == 2
     store.close()
+
+
+def test_triage_query_budget_is_a_nested_setting(path):
+    # Hand-written triage keys must survive, and the budget lands inside [slack.triage], not as a dotted key.
+    path.write_text('[slack]\nwatch = true\n[slack.triage]\nskill = "triage"\nmax_queries = 30\n')
+    assert config.load(path, pack=None).slack_triage.max_queries == 30
+    config.save({"slack.triage.max_queries": 45}, path, pack=None)
+    data = tomllib.loads(path.read_text())
+    assert data["slack"]["watch"] is True
+    assert data["slack"]["triage"] == {"skill": "triage", "max_queries": 45}
+    cfg = config.load(path, pack=None)
+    assert cfg.slack_triage.max_queries == 45 and cfg.slack_triage.skill == "triage"
+    for invalid in (0, 201, 2.5, "x"):
+        with pytest.raises(config.SettingError):
+            config.save({"slack.triage.max_queries": invalid}, path, pack=None)
+    config.save({"slack.triage.max_queries": 20}, path, pack=None)  # back to factory: key removed
+    assert tomllib.loads(path.read_text())["slack"]["triage"] == {"skill": "triage"}
+
+
+def test_triage_query_budget_empty_tables_are_removed(path):
+    config.save({"slack.triage.max_queries": 50}, path, pack=None)
+    assert tomllib.loads(path.read_text()) == {"slack": {"triage": {"max_queries": 50}}}
+    config.save({"slack.triage.max_queries": 20}, path, pack=None)
+    assert tomllib.loads(path.read_text()) == {}
+
+
+def test_triage_query_budget_through_settings_api(path):
+    cfg = config.load(path, pack=None)
+    client = TestClient(create_app(Store(path.parent / "s.db"), cfg))
+    item = next(s for s in client.get("/api/settings").json()["settings"] if s["key"] == "slack.triage.max_queries")
+    assert item["value"] == 20 and item["min"] == 1 and item["max"] == 200
+    ok = client.put("/api/settings", json={"values": {"slack.triage.max_queries": 35}}, headers=HEADERS)
+    assert ok.status_code == 200 and cfg.slack_triage.max_queries == 35  # the running watcher uses it
+    bad = client.put("/api/settings", json={"values": {"slack.triage.max_queries": 0}}, headers=HEADERS)
+    assert bad.status_code == 422
