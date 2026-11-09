@@ -83,3 +83,34 @@ def test_viewer_health_survives_restart_without_adding_session_events(tmp_path, 
         assert TestClient(create_app(reopened)).get("/api/health").json() == fresh
     finally:
         reopened.close()
+
+
+def test_recheck_survives_a_system_whose_check_raises(store, monkeypatch):
+    """Un MCP lanzado sin DBUS_SESSION_BUS_ADDRESS no llega al keyring: antes eso tumbaba el POST con un 500 y el
+    botón de recargar del visor parecía no hacer nada."""
+    import keyring.errors
+
+    cfg = acme()
+
+    class Broken:
+        def doctor_checks(self, heal):
+            raise keyring.errors.NoKeyringError("No recommended backend was available")
+
+    class Fine:
+        def __init__(self, system):
+            self.system = system
+
+        def doctor_checks(self, heal):
+            return [doctor.Check(self.system.check, doctor.OK, "listo")]
+
+    systems_ = doctor.systems.all_systems(cfg)
+    first = systems_[0]
+    monkeypatch.setattr(doctor, "checks", lambda cfg, heal=True: [  # el conftest lo deja vacío
+        lambda s=s: doctor.check_system(cfg, s, heal) for s in systems_])
+    monkeypatch.setattr(doctor.systems, "provider",
+                        lambda cfg, system: Broken() if system.id == first.id else Fine(system))
+    resp = TestClient(create_app(store, cfg)).post("/api/health", headers={"x-casebook-viewer": "1"})
+    assert resp.status_code == 200
+    checks = {c["name"]: c for c in resp.json()["checks"]}
+    assert checks[first.check]["status"] == "fail" and "keyring" in checks[first.check]["detail"]
+    assert all(c["status"] == "ok" for name, c in checks.items() if name != first.check)

@@ -1587,6 +1587,7 @@ const connPanel = (() => {
 
 // Corre doctor en el servidor (sin reparar túneles). Lo usan el panel lateral y Ajustes.
 let rechecking = null;
+let recheckFailed = false; // el reloj de «hace N min» no pisa el «falló»
 function recheckHealth() {
   if (rechecking) return rechecking;
   const btn = $("#recheck");
@@ -1594,15 +1595,24 @@ function recheckHealth() {
   btn.classList.add("spinning");
   $("#conn-when").textContent = "revisando…";
   rechecking = (async () => {
+    let failed = null;
     try {
       const r = await action("/api/health");
-      renderHealth(r.ok ? await r.json() : health);
-    } catch {
-      renderHealth(health);
+      if (r.ok) renderHealth(await r.json());
+      else failed = `el servidor respondió HTTP ${r.status}`;
+    } catch (err) {
+      failed = `no hubo respuesta del visor (${err.message || err})`;
     } finally {
       btn.disabled = false;
       btn.classList.remove("spinning");
       rechecking = null;
+    }
+    recheckFailed = Boolean(failed);
+    if (failed) {
+      // Sin esto el panel se quedaba con el chequeo viejo y parecía que el botón no hacía nada.
+      renderHealth(health);
+      $("#conn-when").textContent = "falló";
+      $("#conn-when").dataset.tip = `No se pudo revisar: ${failed}`;
     }
   })();
   return rechecking;
@@ -1702,7 +1712,7 @@ window.addEventListener("hashchange", route);
 setInterval(() => {
   renderSessions();
   renderHead();
-  if (health && !rechecking) $("#conn-when").textContent = relTime(health.ts);
+  if (health && !rechecking && !recheckFailed) $("#conn-when").textContent = relTime(health.ts);
 }, 30_000);
 
 // --- búsqueda entre sesiones -----------------------------------------------------------------------------
