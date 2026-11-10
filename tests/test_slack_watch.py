@@ -1615,3 +1615,17 @@ def test_today_is_reread_only_when_the_window_opens_not_on_every_status_check(tm
     assert len(runner.calls) == 1
     assert w.day_messages(*today, revalidate=True)["status"] == "searching"  # al abrir la ventana: relee
     assert wait_until(lambda: len(runner.calls) == 2)
+
+
+def test_jira_searches_use_the_team_site_or_ask_the_connector_for_it():
+    job = slack_watch.Job("1.000000", "1.000000", "U1", "Ana", "hola")
+    cfg = Config(jira_base_url="https://acme.atlassian.net/browse/")
+    assert slack_watch.jira_site(cfg) == "https://acme.atlassian.net"
+    assert slack_watch.jira_site(Config()) is None
+    assert slack_watch.jira_site(Config(jira_base_url="acme")) is None  # sin esquema no es un sitio
+    with_site = slack_watch.analysis_prompt(job, "C1", 7, jira_site=slack_watch.jira_site(cfg))
+    assert 'cloudId="https://acme.atlassian.net"' in with_site
+    # Sin sitio configurado, el modelo no lo deduce: lo pide al conector.
+    without = slack_watch.analysis_prompt(job, "C1", 7)
+    assert "getAccessibleAtlassianResources" in without and "nunca lo deduzcas" in without
+    assert "{SLACK}" not in without and slack_watch.SLACK + "slack_search_public" in without

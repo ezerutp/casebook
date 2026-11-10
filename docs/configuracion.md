@@ -28,7 +28,7 @@ approval_timeout_s = 180   # cuánto espera una consulta cara a que la apruebes
 auto_open = true           # abrir el visor en la primera session_start si no hay pestañas abiertas
 
 [jira]
-base_url = "https://<sitio>.atlassian.net/browse/"   # muestra "Abrir card" en el visor
+base_url = "https://<sitio>.atlassian.net/browse/"   # "Abrir card" en el visor y el sitio donde el análisis de Slack busca cards
 
 [cloudwatch]
 max_cost_usd = 0.25        # max_cost_usd por defecto de cw_query (sobre eso pide aprobación)

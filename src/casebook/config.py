@@ -168,7 +168,7 @@ class Config:
     loop_enabled: bool = False
     loop_max_additional_reviews: int = 1
     # Base de los links a las cards (por ejemplo https://<sitio>.atlassian.net/browse/). Sin valor, el visor no
-    # muestra el botón "Abrir card".
+    # muestra el botón "Abrir card" y el análisis de Slack le pide el sitio al conector de Atlassian.
     jira_base_url: str | None = None
     # CloudWatch: tope de costo por consulta (el max_cost_usd por defecto de cw_query) y ventana máxima.
     cw_max_cost_usd: float = 0.25

@@ -35,6 +35,7 @@ import threading
 import time
 from dataclasses import dataclass, field
 from datetime import datetime
+from urllib.parse import urlsplit
 from pathlib import Path
 from typing import Any, Callable
 
@@ -527,12 +528,27 @@ def _environments(envs: dict[str, list[str]] | None) -> str:
             "entorno sale cada dato.")
 
 
+def jira_site(cfg: Config) -> str | None:
+    """El sitio de Jira (https://<sitio>.atlassian.net) sacado de jira.base_url, o None si no está configurado."""
+    url = urlsplit(cfg.jira_base_url or "")
+    return f"{url.scheme}://{url.netloc}" if url.scheme in ("http", "https") and url.netloc else None
+
+
+def _jira_site(site: str | None) -> str:
+    # Sin el sitio, el modelo lo deducía del nombre de la empresa y Jira respondía que ese cloudId no está autorizado.
+    if site:
+        return f"Las tools de Jira van con cloudId=\"{site}\" (el sitio del equipo)."
+    return (f"Antes de usar Jira llama {ATLASSIAN}getAccessibleAtlassianResources y usa como cloudId el id de un "
+            "sitio que devuelva; nunca lo deduzcas del nombre de la empresa ni de un dominio.")
+
+
 def analysis_prompt(job: Job, channel_id: str, session_id: int, continues: bool = False,
                     triage: Triage | None = None, code_paths: list[str] | None = None,
-                    environments: dict[str, list[str]] | None = None) -> str:
+                    environments: dict[str, list[str]] | None = None, jira_site: str | None = None) -> str:
     """continues: la sesión ya tiene el análisis del mensaje principal del hilo (es una repregunta).
     code_paths: las carpetas con el código local que el análisis puede leer.
-    environments: los tipos de fuente con varios entornos (config.ambiguous_envs)."""
+    environments: los tipos de fuente con varios entornos (config.ambiguous_envs).
+    jira_site: el sitio de Jira del equipo (jira_site(cfg)); sin él, el análisis lo pide al conector."""
     if job.also:
         what = (f"{len(job.also) + 1} respuestas nuevas en el hilo {job.thread_ts} (posteriores a ts {job.since}; "
                 f"la última, de {job.user_name}, ts {job.ts})")
@@ -596,8 +612,9 @@ def analysis_prompt(job: Job, channel_id: str, session_id: int, continues: bool 
         "preguntan cómo funciona algo o si algo se puede hacer, la respuesta sale de la documentación o del "
         "código: ábrelos y léelos, no lo supongas. Busca con "
         f"{ATLASSIAN}searchJiraIssuesUsingJql (solo lectura) si ya hay una card con el mismo síntoma, abierta o "
-        "resuelta hace poco (un fix reciente puede explicar el caso), y anótala en similar_cards; si Jira no está "
-        f"disponible, sigue sin eso. Busca también con {SLACK}slack_search_public en el canal (in:<#{channel_id}>, "
+        "resuelta hace poco (un fix reciente puede explicar el caso), y anótala en similar_cards; "
+        + _jira_site(jira_site) + " Si Jira no está disponible, sigue sin eso. Busca también con "
+        f"{SLACK}slack_search_public en el canal (in:<#{channel_id}>, "
         "últimos 14 días) si otros reportaron el mismo síntoma: varios casos iguales en pocos días suelen ser un "
         "problema general." + reading(triage, code_paths)
         + " Si una fuente falla (sesión vencida, túnel), no insistas: dilo en missing_data y sigue con las demás.",
@@ -1487,7 +1504,8 @@ class SlackWatcher:
         try:
             code_paths = config.code_dirs(self.cfg.slack_code_paths)
             result = self._call(analysis_prompt(job, self.cfg.slack_channel_id, session["id"], continues,
-                                                self.cfg.slack_triage, code_paths, config.ambiguous_envs(self.cfg)),
+                                                self.cfg.slack_triage, code_paths, config.ambiguous_envs(self.cfg),
+                                                jira_site(self.cfg)),
                                 self.cfg.slack_analysis_model, analysis_schema(self.cfg.slack_triage),
                                 analysis_tools(self.cfg.slack_triage, code_paths), ANALYSIS_TIMEOUT_S,
                                 effort=self.cfg.slack_analysis_effort, on_event=steps)
@@ -1552,7 +1570,7 @@ class SlackWatcher:
                 review.halt(sid, "Presupuesto global de consultas o tiempo de revisión agotado")
                 break
             prompt = (analysis_prompt(job, self.cfg.slack_channel_id, sid, True, self.cfg.slack_triage,
-                                      code_paths, config.ambiguous_envs(self.cfg))
+                                      code_paths, config.ambiguous_envs(self.cfg), jira_site(self.cfg))
                       + f"\nREVISIÓN ADICIONAL {state['current']}/{state['maximum']}. Quedan como máximo {remaining} "
                       "consultas en el presupuesto global. Lee session_read para recuperar evidencia. Contrasta "
                       "cada afirmación, cuestiona supuestos y busca contradicciones. No repitas búsquedas sin "
