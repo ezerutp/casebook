@@ -85,12 +85,16 @@ def test_poll_prompt_lists_tracked_threads_and_forbids_writing():
 
 
 class FakeRunner:
-    def __init__(self, *results):
+    def __init__(self, *results, events=()):
         self.results = list(results)
         self.calls = []
+        self.events = list(events)  # lo que "hace" el modelo: se manda a on_event antes de devolver
 
-    def __call__(self, prompt, model, schema, allowed, timeout, holder=None, effort=None):
-        self.calls.append({"prompt": prompt, "model": model, "allowed": allowed, "effort": effort})
+    def __call__(self, prompt, model, schema, allowed, timeout, holder=None, effort=None, on_event=None):
+        self.calls.append({"prompt": prompt, "model": model, "allowed": allowed, "effort": effort,
+                           "streamed": on_event is not None})
+        for event in self.events if on_event else ():
+            on_event(event)
         result = self.results.pop(0)
         if isinstance(result, Exception):
             raise result
@@ -1358,3 +1362,256 @@ def test_explicit_cursor_is_not_left_pending_when_already_on(tmp_path, fast):
         assert wait_until(lambda: w._explicit_start_ts is None)
     finally:
         w.stop()
+
+
+# --- avance en vivo del análisis ---------------------------------------------------------------------------------
+
+
+def tool_use(name, **args):
+    return {"type": "assistant", "message": {"content": [{"type": "tool_use", "name": name, "input": args}]}}
+
+
+THINKING = {"type": "assistant", "message": {"content": [{"type": "thinking", "thinking": "secreto"}]}}
+
+
+def test_describe_step_says_what_the_analysis_is_doing_without_its_reasoning():
+    d = slack_watch.describe_step
+    assert d(slack_watch.SLACK + "slack_read_thread", {}) == ("slack", "Leyendo el hilo de Slack")
+    assert d("Skill", {"skill": "acme-triage"}) == ("skill", "Cargando la skill acme-triage")
+    assert d("Read", {"file_path": "/home/x/.claude/skills/acme/recipes/venta.md"}) == ("skill", "Leyendo venta.md")
+    assert d("Read", {"file_path": "/work/backend/src/Sale.java"}) == ("code", "Leyendo código: Sale.java")
+    assert d("Grep", {"pattern": "refund"}) == ("code", "Buscando en el código: «refund»")
+    assert d(slack_watch.OWN + "db_select", {"purpose": "Ubicar la cuenta"}) == ("db", "MySQL: Ubicar la cuenta")
+    assert d(slack_watch.OWN + "cw_query", {"purpose": "Logs del webhook"}) == ("cw", "CloudWatch: Logs del webhook")
+    assert d(slack_watch.ATLASSIAN + "getJiraIssue", {"issueIdOrKey": "SUP-1"}) == ("jira", "Leyendo la card SUP-1")
+    assert d("StructuredOutput", {}) == ("write", "Redactando la conclusión")
+    assert d("ToolSearch", {}) is None and d(slack_watch.OWN + "session_resume", {}) is None
+    long = d("Grep", {"pattern": "x" * 200})[1]
+    assert "…" in long and len(long) < 90  # textos largos se recortan
+
+
+def test_progress_steps_record_tools_mark_thinking_and_skip_repeats(tmp_path):
+    store = Store(tmp_path / "s.db")
+    recorder = slack_watch.Recorder(store)
+    recorder.start_session("prueba")
+    steps = slack_watch.ProgressSteps(recorder)
+    for event in (THINKING, THINKING, tool_use(slack_watch.SLACK + "slack_read_thread"),
+                  tool_use(slack_watch.SLACK + "slack_read_thread"), tool_use("ToolSearch"), {"type": "user"}):
+        steps(event)
+    got = [e["payload"] for e in store.events(recorder.session_id) if e["type"] == "slack.progress"]
+    assert [(p["icon"], p["text"]) for p in got] == [("think", "Pensando"), ("slack", "Leyendo el hilo de Slack")]
+    assert steps.count == 1 and "secreto" not in json.dumps(got)  # el razonamiento no se guarda
+
+
+def test_analysis_records_start_steps_and_end_for_the_live_card(tmp_path):
+    runner = FakeRunner(ANALYSIS, events=[THINKING, tool_use("Read", file_path="/work/backend/src/Sale.java")])
+    w, store = watcher(tmp_path, runner)
+    sid = w.analyze(slack_watch.Job("2.000000", "2.000000", "U1", "Ana", "Hey team"))
+    assert runner.calls[0]["streamed"]
+    progress = [e["payload"] for e in store.events(sid) if e["type"] == "slack.progress"]
+    assert [p["phase"] for p in progress] == ["start", "step", "step", "end"]
+    assert progress[0]["author"] == "Ana" and progress[0]["effort"] == "high"
+    assert progress[-1]["status"] == "done" and progress[-1]["steps"] == 1
+    # El fin llega antes que la conclusión, para que el visor cierre la tarjeta y la conclusión quede arriba.
+    types = [(e["type"], e["payload"].get("kind") or e["payload"].get("phase")) for e in store.events(sid)]
+    assert types.index(("slack.progress", "end")) < types.index(("slack", "analysis"))
+    state = slack_watch.read_state()
+    assert state["analyzing"] is None and state["analyzing_info"] is None
+
+
+def test_failed_analysis_closes_the_live_card(tmp_path):
+    w, store = watcher(tmp_path, FakeRunner(slack_watch.ClaudeError("timeout", "timeout")))
+    sid = w.analyze(slack_watch.Job("2.000000", "2.000000", "U1", "Ana", "Hey team"))
+    end = [e["payload"] for e in store.events(sid) if e["type"] == "slack.progress"][-1]
+    assert end["phase"] == "end" and end["status"] == "error"
+
+
+def test_status_says_which_session_is_being_analyzed(tmp_path):
+    slack_watch.write_state({"analyzing": "2.000000",
+                             "analyzing_info": {"session_id": 7, "author": "Ana", "since": 100.0}})
+    w, _ = watcher(tmp_path, FakeRunner())
+    assert slack_watch.status(w.cfg)["analyzing_info"]["session_id"] == 7
+    slack_watch.write_state({"analyzing": None, "analyzing_info": {"session_id": 7}})
+    assert slack_watch.status(w.cfg)["analyzing_info"] is None  # sin análisis en curso, nada
+
+
+def test_progress_does_not_count_as_session_events_nor_confuse_the_thread(tmp_path):
+    runner = FakeRunner(ANALYSIS, events=[tool_use("Grep", pattern="x")] * 1 + [THINKING])
+    w, store = watcher(tmp_path, runner)
+    sid = w.analyze(slack_watch.Job("2.000000", "2.000000", "U1", "Ana", "Hey team"))
+    listed = next(s for s in store.list_sessions() if s["id"] == sid)
+    real = [e for e in store.events(sid) if e["type"] != "slack.progress"]
+    assert listed["events"] == len(real)
+    assert all(e["type"] != "slack.progress" for e in store.events(sid, skip_types=("slack.progress",)))
+    info = slack_watch.thread_info(store, sid)
+    assert info and _ts_ge(info["since"], "2.000000")  # el mensaje quedó como analizado
+
+
+def _ts_ge(a, b):
+    return tuple(int(x) for x in a.split(".")) >= tuple(int(x) for x in b.split("."))
+
+
+def test_run_claude_streams_events_and_returns_the_final_result(monkeypatch):
+    lines = [json.dumps(THINKING), "no es json", json.dumps(tool_use("Grep", pattern="x")),
+             json.dumps({"type": "result", "is_error": False, "structured_output": {"ok": True}})]
+    seen = {}
+
+    class Proc:
+        returncode = 0
+
+        def __init__(self, command, **kw):
+            seen["command"] = command
+            self.stdout = iter(line + "\n" for line in lines)
+            self.stderr = type("E", (), {"read": staticmethod(lambda: "")})()
+
+        def wait(self, timeout=None):
+            return 0
+
+    monkeypatch.setattr(slack_watch.subprocess, "Popen", Proc)
+    got = []
+    assert slack_watch.run_claude("p", "sonnet", {}, slack_watch.READ_TOOLS, 10, on_event=got.append) == {"ok": True}
+    command = seen["command"]
+    assert command[command.index("--output-format") + 1] == "stream-json" and "--verbose" in command
+    assert [e["type"] for e in got] == ["assistant", "assistant"]  # sin la línea rota ni el resultado
+
+
+# --- elegir un mensaje de un día ---------------------------------------------------------------------------------
+
+DAY = (1000.0, 1000.0 + 86400)  # un día pasado (en segundos epoch): su lista se guarda
+
+
+def day_list(*messages):
+    return {"messages": list(messages), "replies": []}
+
+
+def test_day_prompt_reads_the_whole_range_with_pages():
+    prompt = slack_watch.day_prompt("C1", "1000.000000", "87400.000000")
+    assert 'oldest="1000.000000"' in prompt and 'latest="87400.000000"' in prompt
+    assert "cursor" in prompt and "`replies` va vacío" in prompt
+
+
+def test_day_messages_reads_in_background_and_keeps_people_in_order(tmp_path):
+    runner = FakeRunner(day_list(msg("50000.000002", name="Luz"), msg("50000.000001"), msg("60000.000000", bot=True),
+                                 msg("90000.000000")))  # un bot y uno fuera del día no van
+    w, _ = watcher(tmp_path, runner)
+    first = w.day_messages(*DAY)
+    assert first["status"] == "searching" and first["messages"] == []
+    assert wait_until(lambda: w.day_messages(*DAY)["status"] == "done")
+    done = w.day_messages(*DAY)
+    assert [m["ts"] for m in done["messages"]] == ["50000.000001", "50000.000002"]
+    assert runner.calls[0]["model"] == "haiku" and runner.calls[0]["allowed"] == slack_watch.READ_TOOLS
+    # Un día pasado no se vuelve a leer; con refresh sí.
+    w.day_messages(*DAY)
+    assert len(runner.calls) == 1
+    runner.results.append(day_list(msg("50000.000003")))
+    assert w.day_messages(*DAY, refresh=True)["status"] == "searching"
+    assert wait_until(lambda: w.day_messages(*DAY)["status"] == "done") and len(runner.calls) == 2
+
+
+def test_day_messages_reports_errors_and_the_job_of_each_message(tmp_path):
+    w, _ = watcher(tmp_path, FakeRunner(slack_watch.ClaudeError("sin conector", "connector")), connector="needs_auth")
+    w.day_messages(*DAY)
+    assert wait_until(lambda: w.day_messages(*DAY)["status"] == "error")
+    assert w.day_messages(*DAY)["error"]["code"] == "connector"
+    w, _ = watcher(tmp_path, FakeRunner(day_list(msg("50000.000001"))))
+    slack_watch.write_state({"jobs": {"50000.000001": {"status": "done", "session_id": 9, "at": 1.0}}})
+    w.day_messages(*DAY)
+    assert wait_until(lambda: w.day_messages(*DAY)["status"] == "done")
+    assert w.day_messages(*DAY)["messages"][0]["job"]["session_id"] == 9
+
+
+def test_analyze_message_queues_once_and_reanalyzes_in_the_same_session(tmp_path):
+    runner = FakeRunner(day_list(msg("50000.000001")), ANALYSIS, ANALYSIS)
+    w, store = watcher(tmp_path, runner)
+    w.day_messages(*DAY)
+    assert wait_until(lambda: w.day_messages(*DAY)["status"] == "done")
+    with pytest.raises(KeyError):
+        w.analyze_message("1.000000")  # no está en ninguna lista leída
+    assert w.analyze_message("50000.000001")["status"] == "queued"
+    assert slack_watch.read_state()["manual"]["status"] == "queued"
+    assert w.analyze_message("50000.000001")["status"] == "busy"  # en cola: no se repite
+    sid = w.analyze(w._queue.pop(0))
+    assert w.analyze_message("50000.000001") == {"status": "existing", "session_id": sid}
+    # Reanalizar: la misma sesión, investigando de nuevo y diciendo si cambia la conclusión.
+    assert w.analyze_message("50000.000001", reanalyze=True) == {"status": "queued", "session_id": sid}
+    job = w._queue.pop(0)
+    assert job.reanalyze and job.session_id == sid
+    assert w.analyze(job) == sid
+    prompt = runner.calls[-1]["prompt"]
+    assert "Analiza de nuevo el mensaje de Ana" in prompt and "di si cambia la conclusión y por qué" in prompt
+    start = [e["payload"] for e in store.events(sid)
+             if e["type"] == "slack.progress" and e["payload"]["phase"] == "start"]
+    assert [p["reanalyze"] for p in start] == [False, True]
+
+
+def test_retrying_a_failed_reanalysis_stays_in_its_session(tmp_path):
+    w, _ = watcher(tmp_path, FakeRunner(day_list(msg("50000.000001"), msg("50000.000002")), ANALYSIS))
+    w.day_messages(*DAY)
+    assert wait_until(lambda: w.day_messages(*DAY)["status"] == "done")
+    w.analyze_message("50000.000001")
+    sid = w.analyze(w._queue.pop(0))
+    w.analyze_message("50000.000001", reanalyze=True)
+    w._queue.pop(0)
+    # El reanálisis se corta (cierre del visor, tope del día o error): su reintento sigue en la misma sesión.
+    w._update(slack_watch._recover)
+    assert slack_watch.read_state()["jobs"]["50000.000001"]["status"] == slack_watch.ERROR
+    assert w.analyze_message("50000.000001") == {"status": "queued", "session_id": sid}
+    job = w._queue.pop(0)
+    assert job.reanalyze and job.session_id == sid
+    # Un primer análisis que falló sigue reintentándose como antes, en una sesión nueva.
+    w._update(lambda s: s["jobs"].update({"50000.000002": {"status": slack_watch.ERROR,
+                                                                          "session_id": 7, "at": 1.0}}))
+    assert w.analyze_message("50000.000002") == {"status": "queued", "session_id": None}
+    assert not w._queue.pop(0).reanalyze
+
+
+def test_a_failed_reread_keeps_the_previous_list(tmp_path):
+    runner = FakeRunner(day_list(msg("50000.000001")), slack_watch.ClaudeError("se cortó", "timeout"))
+    w, _ = watcher(tmp_path, runner)
+    w.day_messages(*DAY)
+    assert wait_until(lambda: w.day_messages(*DAY)["status"] == "done")
+    w.day_messages(*DAY, refresh=True)
+    assert wait_until(lambda: w.day_messages(*DAY)["status"] == "error")
+    assert [m["ts"] for m in w.day_messages(*DAY)["messages"]] == ["50000.000001"]
+    assert w.analyze_message("50000.000001")["status"] == "queued"  # se sigue pudiendo elegir
+
+
+def test_day_and_pick_endpoints_need_the_viewer_and_a_watcher(tmp_path):
+    app = create_app(Store(tmp_path / "s.db"), acme())
+    client = TestClient(app)
+    headers = {"x-casebook-viewer": "1"}
+    body = {"oldest": DAY[0], "latest": DAY[1]}
+    assert client.post("/api/slack/day", json=body).status_code == 403  # sin el header del visor
+    assert client.post("/api/slack/day", json=body, headers=headers).status_code == 503  # sin vigilante
+
+    class Watcher:
+        def day_messages(self, oldest, latest, refresh, revalidate):
+            return {"status": "done", "messages": [], "refresh": refresh}
+
+        def analyze_message(self, ts, reanalyze):
+            if ts == "2.000000":
+                raise KeyError(ts)
+            return {"status": "queued", "session_id": None, "reanalyze": reanalyze}
+
+    app.state.watcher = Watcher()
+    assert client.post("/api/slack/day", json={**body, "refresh": True}, headers=headers).json()["refresh"] is True
+    assert client.post("/api/slack/day", json={"oldest": 0, "latest": 9 * 86400}, headers=headers).status_code == 422
+    pick = client.post("/api/slack/analyze-message", json={"ts": "1.000000", "reanalyze": True}, headers=headers)
+    assert pick.status_code == 202 and pick.json()["reanalyze"] is True
+    assert client.post("/api/slack/analyze-message", json={"ts": "2.000000"}, headers=headers).status_code == 404
+    assert client.post("/api/slack/analyze-message", json={"ts": "x"}, headers=headers).status_code == 422
+
+
+def test_today_is_reread_only_when_the_window_opens_not_on_every_status_check(tmp_path, monkeypatch):
+    import time as clock
+
+    runner = FakeRunner(day_list(msg("50000.000001")), day_list(msg("50000.000002")))
+    w, _ = watcher(tmp_path, runner)
+    today = (clock.time() - 3600, clock.time() + 3600)
+    w.day_messages(*today)
+    assert wait_until(lambda: w.day_messages(*today)["status"] == "done")
+    monkeypatch.setattr(slack_watch, "DAY_TTL_S", 0)
+    w.day_messages(*today)  # consulta de estado: no relee
+    assert len(runner.calls) == 1
+    assert w.day_messages(*today, revalidate=True)["status"] == "searching"  # al abrir la ventana: relee
+    assert wait_until(lambda: len(runner.calls) == 2)

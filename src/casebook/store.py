@@ -124,7 +124,8 @@ class Store:
 
     def list_sessions(self) -> list[dict[str, Any]]:
         rows = self._conn.execute(
-            """SELECT s.*, COUNT(e.id) AS events, MAX(e.ts) AS last_event_at, MAX(e.id) AS last_event_id,
+            """SELECT s.*, COALESCE(SUM(e.type != 'slack.progress'), 0) AS events, MAX(e.ts) AS last_event_at,
+                      MAX(e.id) AS last_event_id,
                       COALESCE(SUM(e.type IN ('query.failed', 'query.rejected')), 0) AS errors,
                       COALESCE(MAX(e.type = 'slack'), 0) AS slack
                FROM sessions s LEFT JOIN events e ON e.session_id = s.id
@@ -209,7 +210,15 @@ class Store:
     def latest_event_id(self) -> int:
         return self._conn.execute("SELECT COALESCE(MAX(id), 0) FROM events").fetchone()[0]
 
-    def events(self, session_id: int | None = None, after: int = 0, limit: int = 500) -> list[dict[str, Any]]:
+    def events(self, session_id: int | None = None, after: int = 0, limit: int = 500,
+               skip_types: tuple[str, ...] = ()) -> list[dict[str, Any]]:
+        if skip_types and session_id is not None:
+            marks = ", ".join("?" * len(skip_types))
+            rows = self._conn.execute(
+                f"SELECT * FROM events WHERE session_id = ? AND id > ? AND type NOT IN ({marks}) ORDER BY id LIMIT ?",
+                (session_id, after, *skip_types, limit),
+            ).fetchall()
+            return [{**dict(r), "payload": json.loads(r["payload"])} for r in rows]
         if session_id is None:
             rows = self._conn.execute(
                 "SELECT * FROM events WHERE id > ? ORDER BY id LIMIT ?", (after, limit)

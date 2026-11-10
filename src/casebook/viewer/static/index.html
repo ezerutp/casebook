@@ -57,19 +57,26 @@
       <button class="ghost" id="pager-next" aria-label="Página siguiente">›</button>
     </div>
     <nav id="search-results" aria-label="Resultados de búsqueda" hidden></nav>
-    <label class="follow"><input type="checkbox" id="follow" checked> Seguir la sesión activa</label>
+    <label class="follow" data-tip="Cuando empieza o se retoma una sesión (tuya o de un análisis de Slack), el visor salta a ella.&#10;Desmárcalo para quedarte en la que estás leyendo." data-tip-place="right"><input type="checkbox" id="follow" checked> Seguir la sesión activa</label>
     </div>
 
     <section class="conn-panel slack-panel" id="slack-panel" aria-labelledby="slack-title" hidden>
       <div class="conn-head">
-        <h2 id="slack-title">Slack</h2>
+        <button class="conn-toggle" id="slack-fold" aria-expanded="true" aria-controls="slack-body">
+          <span class="conn-chevron" aria-hidden="true"></span>
+          <span class="conn-title" id="slack-title">Slack</span>
+          <span class="slack-light" id="slack-light" aria-hidden="true"></span>
+        </button>
         <span class="conn-when" id="slack-when"></span>
         <button class="switch" role="switch" id="slack-toggle" aria-checked="false" aria-label="Vigilar el canal de soporte"></button>
       </div>
-      <p class="slack-status" id="slack-status" aria-live="polite"></p>
-      <div id="slack-alert"></div>
-      <button class="slack-latest" id="slack-latest"><span class="btn-icon" data-icon="spark" aria-hidden="true"></span><span class="label">Analizar el último mensaje</span></button>
-      <div class="slack-status" id="slack-manual" aria-live="polite" hidden></div>
+      <div class="conn-body" id="slack-body">
+        <p class="slack-status" id="slack-status" aria-live="polite"></p>
+        <div id="slack-alert"></div>
+        <button class="slack-latest" id="slack-latest" data-tip="Busca el último pedido del canal y lo analiza, aunque la vigilancia esté apagada.&#10;Si ya está analizado, te lleva a su sesión."><span class="btn-icon" data-icon="spark" aria-hidden="true"></span><span class="label">Analizar el último mensaje</span></button>
+        <button class="slack-pick" id="slack-pick" data-tip="Elige un día y, de los mensajes de ese día, cuál analizar (o volver a analizar)."><span class="btn-icon" data-icon="clock" aria-hidden="true"></span><span>Elegir un mensaje…</span></button>
+        <div class="slack-status" id="slack-manual" aria-live="polite" hidden></div>
+      </div>
     </section>
 
     <section class="conn-panel" aria-labelledby="conn-title">
@@ -105,6 +112,12 @@
         <ol class="timeline" id="timeline"></ol>
       </div>
       <aside class="summary" id="summary" aria-label="Resumen de la sesión" hidden>
+        <section class="panel thread-panel" id="sum-thread" hidden>
+          <h2><span class="btn-icon" data-icon="slack" aria-hidden="true"></span>Hilo de Slack</h2>
+          <p class="thread-hint">Lee las respuestas nuevas del hilo y, si hay algo, las analiza en esta sesión.</p>
+          <button class="slack-latest thread-check"><span class="btn-icon" data-icon="slack" aria-hidden="true"></span><span class="label">Revisar respuestas del hilo</span></button>
+          <div class="thread-status" aria-live="polite" hidden></div>
+        </section>
         <section class="panel" id="sum-notes" hidden>
           <h2>Conclusiones</h2>
           <ul class="sum-notes"></ul>
@@ -259,6 +272,25 @@
       <button class="modal-close" aria-label="Cerrar historial">Cerrar</button>
     </div>
     <div class="modal-body"></div>
+  </dialog>
+
+  <dialog id="slack-pick-modal" class="card-modal slack-pick-modal" aria-labelledby="slack-pick-title">
+    <div class="modal-bar">
+      <h2 id="slack-pick-title"><span class="btn-icon" data-icon="slack" aria-hidden="true"></span>Elegir un mensaje para analizar</h2>
+      <button class="icon-btn modal-close" aria-label="Cerrar" data-icon="close"></button>
+    </div>
+    <div class="pick-toolbar">
+      <div class="pick-day" role="group" aria-label="Día">
+        <button class="icon-btn pick-prev" aria-label="Día anterior" data-tip="Día anterior"></button>
+        <input type="date" class="pick-date" aria-label="Día">
+        <button class="icon-btn pick-next" aria-label="Día siguiente" data-tip="Día siguiente"></button>
+        <span class="pick-day-label"></span>
+      </div>
+      <label class="pick-only" data-tip="Muestra solo los mensajes que piden algo: preguntas, problemas o pedidos de ayuda.&#10;Oculta avisos y agradecimientos. Desmárcalo si un pedido quedó como aviso."><input type="checkbox" class="pick-only-input" checked> Solo pedidos</label>
+      <button class="icon-btn pick-refresh" aria-label="Volver a leer el día" data-tip="Volver a leer el día"></button>
+    </div>
+    <div class="modal-body pick-body" aria-live="polite"></div>
+    <div class="pick-foot" aria-live="polite" hidden></div>
   </dialog>
 
   <dialog id="slack-enable-modal" class="card-modal slack-enable-modal" aria-labelledby="slack-enable-title">
