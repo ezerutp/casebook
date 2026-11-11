@@ -2,8 +2,9 @@
 
 Un pack es una carpeta:
 
-    pack.toml          mismo formato que config.toml más [pack] (name, version, display_name, requires) y,
-                       opcional, [[requires.plugins]] (name, provides, path o pip)
+    pack.toml          mismo formato que config.toml más [pack] (name, version, display_name, requires, repo) y,
+                       opcional, [[requires.plugins]] (name, provides, path o pip) y [pack.knowledge] (repo,
+                       branch): la rama git donde el equipo comparte conocimiento (ver knowledge_share.py)
     skills/<nombre>/   skills para los agentes (SKILL.md y sus archivos)
     knowledge/*.json   conocimiento semilla: se importa como pending, sin pisar lo que ya existe
 
@@ -68,6 +69,12 @@ def manifest(folder: Path) -> dict[str, Any]:
             raise PackError(f"{path}: [pack] requires solo admite «>=versión» (está {requires!r})")
         if _version(__version__) < _version(requires[2:]):
             raise PackError(f"el pack {name} pide casebook {requires} y tienes {__version__}: actualiza la app")
+    shared = meta.get("knowledge")
+    if shared is not None and not isinstance(shared, dict):
+        raise PackError(f"{path}: [pack.knowledge] tiene que ser una tabla (repo, branch)")
+    for where, value in (("[pack] repo", meta.get("repo")), ("[pack.knowledge] repo", (shared or {}).get("repo"))):
+        if value is not None and not (isinstance(value, str) and _is_git(value)):
+            raise PackError(f"{path}: {where} tiene que ser una URL git (git@…, ssh://… o https://….git)")
     return {**meta, "plugins": data.get("requires", {}).get("plugins", [])}
 
 
@@ -333,6 +340,7 @@ def install(source: str | Path, confirm: Callable[[str], bool] | None = None,
         seeded = seed_knowledge(target)
         if seeded:
             out(f"Conocimiento semilla: {seeded} entradas nuevas (pending).")
+        pull_knowledge(out)
         for plugin in info["plugins"]:
             if not plugin["missing"]:
                 continue
@@ -364,30 +372,48 @@ def seed_knowledge(pack_dir: Path) -> int:
     files = sorted((pack_dir / "knowledge").glob("*.json"))
     if not files:
         return 0
-    from .knowledge import Conflict, KnowledgeError
     from .store import Store
 
     store = Store(config.load().db_path)
     count = 0
     try:
         for path in files:
-            for entry in json.loads(path.read_text()):
-                try:
-                    store.knowledge.db.write(
-                        source=entry["source"], environment=entry["environment"], entity=entry["entity"],
-                        kind=entry["kind"], title=entry["title"], content=entry["content"],
-                        topics=list(entry.get("topics", [])),
-                        evidence={"pack": pack_dir.name, "file": path.name}, status="pending",
-                        reason=f"semilla del pack {pack_dir.name}", expected_revision=0, actor="pack",
-                    )
-                    count += 1
-                except Conflict:
-                    continue  # ya existe: manda lo del equipo
-                except (KeyError, KnowledgeError) as exc:
-                    raise PackError(f"knowledge/{path.name}: entrada inválida ({exc})") from None
+            # Sin fecha, una semilla nunca pisa lo local; su firma queda anotada y, si la eliminas, no vuelve.
+            result = store.knowledge.db.import_entries(
+                [{k: v for k, v in e.items() if k != "updated_at"} for e in json.loads(path.read_text())],
+                origin=f"pack {pack_dir.name} · {path.name}", actor="pack", status="pending")
+            if result["invalid"]:
+                raise PackError(f"knowledge/{path.name}: {result['invalid']} entradas inválidas")
+            count += result["new"]
     finally:
         store.close()
     return count
+
+
+def pull_knowledge(out: Callable[[str], None] = lambda s: None) -> dict | None:
+    """Trae el conocimiento del equipo si el pack activo declara [pack.knowledge]. Un fallo (red, acceso) no
+    rompe la instalación del pack: se avisa y se sigue."""
+    import sqlite3
+
+    from . import knowledge_share
+    from .knowledge import KnowledgeError
+    from .store import Store
+
+    try:
+        target = knowledge_share.remote(config.load(Path("/nonexistent/config.toml")))
+        if target is None:
+            return None
+        store = Store(config.load().db_path)
+        try:
+            result = knowledge_share.pull(store.knowledge.db, target, interactive=sys.stdin.isatty())
+        finally:
+            store.close()
+    except (KnowledgeError, OSError, sqlite3.Error) as exc:
+        out(f"No pude traer el conocimiento del equipo ({exc}). Reintenta con `casebook knowledge pull`.")
+        return None
+    out(f"Conocimiento del equipo: {result['new']} nuevas, {result['updated']} actualizadas, "
+        f"{result['existing']} ya las tenías.")
+    return result
 
 
 def refresh_agent_skills(pack_dir: Path) -> list[str]:
@@ -460,6 +486,10 @@ name = "{name}"
 version = "0.1.0"
 display_name = "{display}"
 # requires = ">=0.2.0"                 # versión mínima de la app
+# repo = "git@github.com:equipo/pack.git"   # el repo del pack: `pack update` lo usa si se instaló desde un zip
+
+# [pack.knowledge]                     # la rama donde el equipo comparte conocimiento (casebook knowledge pull/push)
+# branch = "knowledge"
 
 [texts]
 domain = "casos de soporte de {display}"

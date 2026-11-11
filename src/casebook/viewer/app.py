@@ -10,9 +10,9 @@ import sqlite3
 from pathlib import Path
 
 import uvicorn
-from fastapi import Depends, FastAPI, HTTPException, Request
+from fastapi import Body, Depends, FastAPI, HTTPException, Request
 from pydantic import BaseModel
-from fastapi.responses import FileResponse, PlainTextResponse, StreamingResponse
+from fastapi.responses import FileResponse, JSONResponse, PlainTextResponse, StreamingResponse
 from fastapi.staticfiles import StaticFiles
 
 from typing import Any
@@ -382,6 +382,38 @@ def create_app(store: Store, cfg: Config | None = None, served_by: str = "viewer
     @app.post("/api/knowledge/import", dependencies=[Depends(require_viewer)])
     def knowledge_import():
         return knowledge_call(store.knowledge.import_sessions)
+
+    @app.get("/api/knowledge/export")
+    def knowledge_export() -> JSONResponse:
+        from datetime import date
+
+        name = f"casebook-conocimiento-{date.today()}.json"
+        return JSONResponse(knowledge_call(store.knowledge.db.export),
+                            headers={"content-disposition": f'attachment; filename="{name}"'})
+
+    @app.post("/api/knowledge/import-file", dependencies=[Depends(require_viewer)])
+    def knowledge_import_file(data: Any = Body(...), name: str = "archivo"):
+        return knowledge_call(store.knowledge.db.import_entries, data, origin=name[:200] or "archivo")
+
+    @app.get("/api/knowledge/share")
+    def knowledge_share_info() -> dict:
+        """Si el pack activo declara una rama de conocimiento (para mostrar «Traer del equipo»)."""
+        from .. import knowledge_share
+
+        try:
+            target = knowledge_share.remote()
+        except KnowledgeError as exc:
+            return {"configured": False, "error": str(exc)}
+        return {"configured": target is not None, "branch": target.branch if target else None}
+
+    @app.post("/api/knowledge/pull", dependencies=[Depends(require_viewer)])
+    def knowledge_pull():
+        from .. import knowledge_share
+
+        target = knowledge_call(knowledge_share.remote)
+        if target is None:
+            raise HTTPException(422, "El pack activo no declara [pack.knowledge]: no hay rama del equipo")
+        return knowledge_call(knowledge_share.pull, store.knowledge.db, target)
 
     @app.get("/api/knowledge/{entry_id}")
     def knowledge_read(entry_id: int, history_offset: int = 0, revision: int | None = None):

@@ -304,6 +304,39 @@ const knowledgeView = (() => {
       message.textContent = `${result.changed} actualizaciones de conocimiento. ${result.warnings} observaciones no pudieron importarse. Repetir la importación no duplica entradas.`;
     } catch(error) { fail(error); } finally { button.disabled = false; }
   };
+  function counts(r) {
+    const parts = [`${r.new} nuevas`, `${r.existing} ya las tenías`];
+    if (r.updated) parts.push(`${r.updated} actualizadas`);
+    if (r.kept) parts.push(`${r.kept} más viejas que las tuyas`);
+    if (r.invalid) parts.push(`${r.invalid} inválidas`);
+    return parts.join(" · ") + ".";
+  }
+  document.querySelector("#knowledge-export").onclick = () => { location.href = "/api/knowledge/export"; };
+  const fileInput = document.querySelector("#knowledge-file");
+  document.querySelector("#knowledge-import-file").onclick = () => fileInput.click();
+  fileInput.onchange = async () => {
+    const file = fileInput.files[0];
+    fileInput.value = "";
+    if (!file) return;
+    message.textContent = `Importando ${file.name}…`;
+    try {
+      const result = await request(`/api/knowledge/import-file?name=${encodeURIComponent(file.name)}`,
+        {method: "POST", headers: {"content-type": "application/json", "x-casebook-viewer": "1"}, body: await file.text()});
+      await load();
+      message.textContent = `Importado: ${counts(result)}`;
+    } catch(error) { fail(error); }
+  };
+  const pull = document.querySelector("#knowledge-pull");
+  request("/api/knowledge/share").then(info => { pull.hidden = !info.configured; }).catch(() => {});
+  pull.onclick = async () => {
+    pull.disabled = true;
+    message.textContent = "Trayendo el conocimiento del equipo…";
+    try {
+      const result = await request("/api/knowledge/pull", {method: "POST", headers: {"x-casebook-viewer": "1"}});
+      await load();
+      message.textContent = `Traído del equipo: ${counts(result)}`;
+    } catch(error) { fail(error); } finally { pull.disabled = false; }
+  };
   window.addEventListener("beforeunload", e => { if (editing) { e.preventDefault(); e.returnValue = ""; } });
   return {show};
 })();

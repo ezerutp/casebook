@@ -9,7 +9,7 @@ from mcp.server.mcpserver.exceptions import ToolError
 
 from casebook.config import Config
 from casebook.events import Recorder
-from casebook.knowledge import KnowledgeStore, KnowledgeError, Conflict
+from casebook.knowledge import KnowledgeStore, KnowledgeError, Conflict, signature
 from casebook.server import build
 from casebook.store import Store
 from casebook.viewer.app import create_app
@@ -274,3 +274,136 @@ def test_delete_endpoint_requires_viewer_and_current_revision(store):
     assert client.request("DELETE", url, json={"expected_revision": 0}, headers={"x-casebook-viewer": "1"}).status_code == 409
     assert client.request("DELETE", url, json=body, headers={"x-casebook-viewer": "1"}).status_code == 200
     assert client.request("DELETE", url, json=body, headers={"x-casebook-viewer": "1"}).status_code == 404
+
+
+# --- firmas, exportar e importar ------------------------------------------------------------------------------
+
+
+def other(tmp_path, name="amigo"):
+    return KnowledgeStore(tmp_path / name / "knowledge.db")
+
+
+def fill(db, n, start=0):
+    for i in range(start, start + n):
+        db.write(**{**entry(), "entity": f"tabla_{i}", "title": f"Tabla {i}"})
+
+
+def test_signature_ignores_status_dates_and_evidence(store):
+    db = store.knowledge.db
+    saved = db.write(**entry())
+    first = db.read(saved["id"])
+    fields = entry()
+    fields["evidence"] = {"summary": "Otra evidencia"}
+    db.write(**fields, status="stale", expected_revision=1)
+    assert db.read(saved["id"])["signature"] == first["signature"] == signature(first)
+    fields["content"] = "Contenido distinto"
+    db.write(**fields, expected_revision=2)
+    assert db.read(saved["id"])["signature"] != first["signature"]
+
+
+def test_export_signs_entries_from_a_database_without_signatures(store):
+    db = store.knowledge.db
+    fill(db, 2)
+    with db.connection() as c:  # una base anterior a las firmas
+        c.execute("ALTER TABLE entries DROP COLUMN signature")
+        c.commit()
+    assert db.read(1)["signature"] is None
+    data = db.export()
+    assert data["casebook_knowledge"] == 1 and len(data["entries"]) == 2
+    assert all(e["signature"] == signature(e) for e in data["entries"])
+    assert db.read(1)["signature"] == data["entries"][0]["signature"]
+    assert "evidence" not in data["entries"][0] and data["entries"][0]["evidence_summary"] == "Referencia de código"
+
+
+def test_import_only_adds_what_is_missing(store, tmp_path):
+    mine, friend = store.knowledge.db, other(tmp_path)
+    fill(mine, 30)
+    assert friend.import_entries(mine.export(), origin="a.json") == {"new": 30, "existing": 0, "updated": 0, "kept": 0, "invalid": 0}
+    fill(mine, 3, start=30)
+    data = json.loads(json.dumps(mine.export()))  # como llega de un archivo
+    assert friend.import_entries(data, origin="b.json")["new"] == 3
+    assert friend.import_entries(data, origin="b.json") == {"new": 0, "existing": 33, "updated": 0, "kept": 0, "invalid": 0}
+    assert friend.search()["total"] == 33
+    item = friend.read(friend.search("tabla_31")["entries"][0]["id"])
+    assert item["status"] == "pending" and item["evidence"]["imported_from"] == "b.json"
+    assert "code_path" not in item["evidence"] and item["revision"] == 1
+
+
+def test_import_keeps_status_and_does_not_restore_deleted_entries(store, tmp_path):
+    describe(store)
+    data = store.knowledge.db.export()
+    friend = other(tmp_path)
+    assert friend.import_entries(data, origin="a.json")["new"] == 1
+    item = friend.search()["entries"][0]
+    assert item["status"] == "verified" and item["verified_at"]
+    friend.delete(item["id"], item["revision"])
+    assert friend.import_entries(data, origin="a.json")["existing"] == 1
+    assert friend.search()["total"] == 0
+
+
+def test_import_conflict_newest_wins_with_history(store, tmp_path):
+    mine, friend = store.knowledge.db, other(tmp_path)
+    saved = mine.write(**entry())
+    friend.import_entries(mine.export(), origin="a.json")
+    mine.edit(saved["id"], expected_revision=1, title="Ventas", content="Versión nueva", topics=["ventas"], reason="Corrección")
+    assert friend.import_entries(mine.export(), origin="b.json")["updated"] == 1
+    local = friend.read(friend.search()["entries"][0]["id"])
+    assert local["content"] == "Versión nueva" and local["revision"] == 2 and len(local["history"]) == 2
+    # Lo local más reciente no se pisa con un archivo viejo, ni con una entrada sin fecha.
+    friend.edit(local["id"], expected_revision=2, title="Ventas", content="Corregido aquí", topics=[], reason="Local")
+    old = mine.export()
+    old["entries"][0]["content"] = "Otra versión"
+    assert friend.import_entries(old, origin="c.json")["kept"] == 1
+    del old["entries"][0]["updated_at"]
+    assert friend.import_entries(old, origin="c.json")["kept"] == 1
+    assert friend.read(local["id"])["content"] == "Corregido aquí"
+
+
+def test_import_does_not_trust_the_file(store, tmp_path):
+    mine, friend = store.knowledge.db, other(tmp_path)
+    fill(mine, 2)
+    friend.import_entries(mine.export(), origin="a.json")
+    data = mine.export()
+    data["entries"][0]["content"] = "email=client@example.com"  # misma firma declarada, otro contenido
+    data["entries"][0]["updated_at"] = "2999-01-01T00:00:00+00:00"
+    data["entries"][1] = {"source": "mysql"}
+    data["entries"].append({**entry(), "entity": "x", "status": "inventado"})
+    result = friend.import_entries(data, origin="b.json")
+    assert result == {"new": 0, "existing": 0, "updated": 1, "kept": 0, "invalid": 2}
+    item = friend.read(1)
+    assert "client@example.com" not in item["content"] and item["updated_at"] < "2999"
+    with pytest.raises(KnowledgeError, match="más nueva"):
+        friend.import_entries({"casebook_knowledge": 2, "entries": []}, origin="x")
+    with pytest.raises(KnowledgeError, match="no es un archivo"):
+        friend.import_entries({"entries": []}, origin="x")
+
+
+def test_export_and_import_endpoints(store, tmp_path):
+    fill(store.knowledge.db, 2)
+    c = TestClient(create_app(store))
+    got = c.get("/api/knowledge/export")
+    assert got.status_code == 200 and "attachment" in got.headers["content-disposition"]
+    friend = Store(tmp_path / "amigo" / "sessions.db")
+    try:
+        fc = TestClient(create_app(friend))
+        assert fc.post("/api/knowledge/import-file", json=got.json()).status_code == 403
+        done = fc.post("/api/knowledge/import-file?name=a.json", json=got.json(), headers={"x-casebook-viewer": "1"})
+        assert done.json()["new"] == 2
+        assert fc.post("/api/knowledge/import-file", json={"x": 1}, headers={"x-casebook-viewer": "1"}).status_code == 422
+        assert fc.get("/api/knowledge/share").json() == {"configured": False, "branch": None}
+        assert fc.post("/api/knowledge/pull", headers={"x-casebook-viewer": "1"}).status_code == 422
+    finally:
+        friend.close()
+
+
+def test_cli_export_and_import(store, tmp_path, monkeypatch, capsys):
+    from casebook import cli, config
+
+    fill(store.knowledge.db, 2)
+    path = tmp_path / "k.json"
+    monkeypatch.setattr(config, "load", lambda *a, **k: Config(db_path=store.path))
+    assert cli.main(["knowledge", "export", str(path)]) == 0
+    assert len(json.loads(path.read_text())["entries"]) == 2
+    assert cli.main(["knowledge", "import", str(path)]) == 0
+    assert "2 ya las tenías" in capsys.readouterr().out
+    assert cli.main(["knowledge", "pull"]) == 1

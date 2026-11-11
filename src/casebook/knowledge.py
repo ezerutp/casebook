@@ -1,10 +1,12 @@
 """Conocimiento local, independiente del historial. Ninguna operación consulta producción."""
 from __future__ import annotations
 
+import hashlib
 import json
 import re
 import sqlite3
 from contextlib import contextmanager
+from datetime import UTC, datetime
 from pathlib import Path
 from typing import Any
 
@@ -20,7 +22,7 @@ CREATE TABLE IF NOT EXISTS entries (
  entity TEXT NOT NULL, kind TEXT NOT NULL, title TEXT NOT NULL, content TEXT NOT NULL,
  topics TEXT NOT NULL, status TEXT NOT NULL, evidence TEXT NOT NULL,
  created_at TEXT NOT NULL, updated_at TEXT NOT NULL, verified_at TEXT,
- revision INTEGER NOT NULL, UNIQUE(source, environment, entity, kind)
+ revision INTEGER NOT NULL, signature TEXT, UNIQUE(source, environment, entity, kind)
 );
 CREATE TABLE IF NOT EXISTS revisions (
  entry_id INTEGER NOT NULL, revision INTEGER NOT NULL, snapshot TEXT NOT NULL,
@@ -30,6 +32,11 @@ CREATE TABLE IF NOT EXISTS observations (key TEXT PRIMARY KEY);
 CREATE TABLE IF NOT EXISTS deleted_entries (id INTEGER PRIMARY KEY);
 PRAGMA user_version=1;
 """
+
+
+FORMAT = "casebook_knowledge"  # la clave que identifica un archivo exportado; su valor es la versión
+MAX_IMPORT = 5000
+SIGNED = ("source", "environment", "entity", "kind", "title", "content", "topics")
 
 
 class KnowledgeError(ValueError):
@@ -44,6 +51,54 @@ def _text(value: str, name: str, maximum: int) -> str:
     if not isinstance(value, str) or not value.strip() or len(value) > maximum:
         raise KnowledgeError(f"{name}: texto requerido, máximo {maximum} caracteres")
     return value.strip()
+
+
+def signature(entry: dict) -> str:
+    """Firma de una entrada: identifica su contenido en cualquier máquina. Deja fuera estado, fechas y evidencia,
+    que son locales. No es criptográfica contra nadie: solo sirve para no importar dos veces lo mismo."""
+    data = [entry[k] for k in SIGNED[:-1]] + [sorted(entry["topics"])]
+    return hashlib.sha256(json.dumps(data, ensure_ascii=False, separators=(",", ":")).encode()).hexdigest()[:16]
+
+
+def _clean(source, environment, entity, kind, title, content, topics) -> dict:
+    """Los campos firmados tal como quedan guardados: validados, recortados y redactados."""
+    if source not in SOURCES or kind not in KINDS:
+        raise KnowledgeError("fuente, tipo o estado inválido")
+    if not isinstance(topics, (list, tuple)) or len(topics) > 20:
+        raise KnowledgeError("máximo 20 temas")
+    redactor = Redactor(mask_emails=True)  # la memoria compartida no conserva emails de clientes
+    return {"source": source, "environment": _text(environment, "entorno", 200),
+            "entity": _text(entity, "entidad", 300), "kind": kind,
+            "title": redactor.text(_text(title, "título", 200)),
+            "content": redactor.text(_text(content, "contenido", 100_000)),
+            "topics": sorted({_text(t, "tema", 60).casefold() for t in topics})}
+
+
+def _stamp(value) -> str | None:
+    """Una fecha de un archivo importado, en el formato de now(). Una fecha futura no puede ganarle a lo local."""
+    if value is None:
+        return None
+    try:
+        parsed = datetime.fromisoformat(value)
+    except (TypeError, ValueError):
+        raise KnowledgeError("fecha inválida") from None
+    if parsed.tzinfo is None:
+        raise KnowledgeError("fecha sin zona horaria")
+    return min(parsed.astimezone(UTC).isoformat(timespec="milliseconds"), now())
+
+
+def parse_export(data: Any) -> tuple[list, str | None]:
+    """(entradas, exported_at) de un archivo exportado; también acepta la lista simple de knowledge/*.json de un pack."""
+    exported_at = None
+    if isinstance(data, dict) and FORMAT in data:
+        if data[FORMAT] != 1:
+            raise KnowledgeError("el archivo es de una versión más nueva de casebook: actualiza la app")
+        exported_at, data = data.get("exported_at"), data.get("entries")
+    if not isinstance(data, list):
+        raise KnowledgeError("no es un archivo de conocimiento de casebook")
+    if len(data) > MAX_IMPORT:
+        raise KnowledgeError(f"máximo {MAX_IMPORT} entradas por archivo")
+    return data, exported_at if isinstance(exported_at, str) else None
 
 
 def _decode(row) -> dict:
@@ -68,6 +123,8 @@ class KnowledgeStore:
             if version > 1:
                 raise KnowledgeError("knowledge.db pertenece a una versión más nueva")
             c.executescript(SCHEMA)
+            if not any(r[1] == "signature" for r in c.execute("PRAGMA table_info(entries)")):
+                c.execute("ALTER TABLE entries ADD COLUMN signature TEXT")  # bases anteriores a las firmas
             yield c
         finally:
             c.close()
@@ -117,20 +174,14 @@ class KnowledgeStore:
     def write(self, *, source: str, environment: str, entity: str, kind: str, title: str,
               content: str, topics: list[str], evidence: dict, status="pending", reason: str,
               expected_revision: int = 0, actor="agent", observed_at=None, observation=None):
-        if source not in SOURCES or kind not in KINDS or status not in STATUSES:
+        if status not in STATUSES:
             raise KnowledgeError("fuente, tipo o estado inválido")
-        environment = _text(environment, "entorno", 200)
-        entity = _text(entity, "entidad", 300)
-        title = _text(title, "título", 200)
-        content = _text(content, "contenido", 100_000)
-        reason = _text(reason, "motivo", 1000)
-        if len(topics) > 20:
-            raise KnowledgeError("máximo 20 temas")
-        topics = sorted({_text(t, "tema", 60).casefold() for t in topics})
+        clean = _clean(source, environment, entity, kind, title, content, topics)
+        environment, entity, title, content, topics = (clean[k] for k in SIGNED[1:3] + SIGNED[4:])
         if not isinstance(evidence, dict) or not evidence or len(json.dumps(evidence)) > 8000:
             raise KnowledgeError("evidencia requerida (máximo 8000 caracteres)")
-        redactor = Redactor(mask_emails=True)  # la memoria compartida no conserva emails de clientes
-        title, content, reason = [redactor.text(v) for v in (title, content, reason)]
+        redactor = Redactor(mask_emails=True)
+        reason = redactor.text(_text(reason, "motivo", 1000))
         evidence = redactor.value(evidence)
         stamp = now()
         with self.connection() as c, c:
@@ -139,7 +190,7 @@ class KnowledgeStore:
             old = _decode(old_row) if old_row else None
             if observation and c.execute("SELECT 1 FROM observations WHERE key=?", (observation,)).fetchone():
                 return {"id": old["id"] if old else None, "changed": False}
-            if actor != "capture" and (old["revision"] if old else 0) != expected_revision:
+            if actor not in {"capture", "import"} and (old["revision"] if old else 0) != expected_revision:
                 raise Conflict("la entrada cambió o ya existe; vuelve a leerla antes de guardar")
             if observed_at and old and observed_at < old["updated_at"]:
                 if observation:
@@ -156,11 +207,12 @@ class KnowledgeStore:
             ).fetchone()[0]
             values = (entry_id, source, environment, entity, kind, title, content, json.dumps(topics), status,
                       json.dumps(evidence, ensure_ascii=False), old["created_at"] if old else updated_at,
-                      updated_at, verified_at, revision)
-            c.execute("""INSERT INTO entries(id,source,environment,entity,kind,title,content,topics,status,evidence,created_at,updated_at,verified_at,revision)
-                VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?) ON CONFLICT(source,environment,entity,kind) DO UPDATE SET
+                      updated_at, verified_at, revision, signature({**clean, "topics": topics}))
+            c.execute("""INSERT INTO entries(id,source,environment,entity,kind,title,content,topics,status,evidence,created_at,updated_at,verified_at,revision,signature)
+                VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?,?) ON CONFLICT(source,environment,entity,kind) DO UPDATE SET
                 title=excluded.title,content=excluded.content,topics=excluded.topics,status=excluded.status,
-                evidence=excluded.evidence,updated_at=excluded.updated_at,verified_at=excluded.verified_at,revision=excluded.revision""", values)
+                evidence=excluded.evidence,updated_at=excluded.updated_at,verified_at=excluded.verified_at,
+                revision=excluded.revision,signature=excluded.signature""", values)
             entry = _decode(c.execute("SELECT * FROM entries WHERE source=? AND environment=? AND entity=? AND kind=?", (source, environment, entity, kind)).fetchone())
             snapshot = {**entry, "reason": reason, "actor": actor}
             c.execute("INSERT INTO revisions VALUES (?,?,?)", (entry["id"], revision, json.dumps(snapshot, ensure_ascii=False)))
@@ -181,6 +233,59 @@ class KnowledgeStore:
             c.execute("DELETE FROM entries WHERE id=?", (entry_id,))
             # Mantener recibos evita que importar las mismas consultas restaure lo eliminado.
         return {"deleted": True, "id": entry_id}
+
+    def export(self) -> dict:
+        """Todas las entradas, firmadas, para compartir. Firma primero las que aún no tienen firma."""
+        with self.connection() as c, c:
+            c.execute("BEGIN IMMEDIATE")
+            for row in c.execute("SELECT * FROM entries WHERE signature IS NULL").fetchall():
+                c.execute("UPDATE entries SET signature=? WHERE id=?", (signature(_decode(row)), row["id"]))
+            rows = [_decode(r) for r in c.execute("SELECT * FROM entries ORDER BY source, environment, entity, kind")]
+        # Solo el resumen de la evidencia: los IDs de sesión y consulta apuntan a un historial que no viaja.
+        entries = [{"signature": r["signature"], **{k: r[k] for k in SIGNED}, "status": r["status"],
+                    "updated_at": r["updated_at"], "evidence_summary": str(r["evidence"].get("summary", ""))[:2000]}
+                   for r in rows]
+        return {FORMAT: 1, "exported_at": now(), "entries": entries}
+
+    def import_entries(self, data: Any, *, origin: str, actor="import", status: str | None = None) -> dict:
+        """Importa un archivo exportado (o la lista semilla de un pack) sin duplicar. La firma se recalcula: no se
+        confía en la del archivo. Una firma ya vista se omite, aunque la entrada se haya editado o eliminado aquí.
+        Si la entidad ya existe con otro contenido gana la más reciente; una entrada sin fecha nunca pisa la local.
+        `status` fuerza el estado de lo importado (las semillas entran como pending)."""
+        items, exported_at = parse_export(data)
+        result = {"new": 0, "existing": 0, "updated": 0, "kept": 0, "invalid": 0}
+        for item in items:
+            try:
+                clean = _clean(*(item[k] for k in SIGNED[:-1]), item.get("topics", []))
+                observed_at = _stamp(item.get("updated_at"))
+                state = status or item.get("status", "pending")
+                summary = item.get("evidence_summary")
+                evidence = {"summary": (summary if isinstance(summary, str) and summary.strip() else "Sin resumen")[:2000],
+                            "imported_from": origin, **({"exported_at": exported_at} if exported_at else {})}
+            except (KeyError, TypeError, AttributeError, KnowledgeError):
+                result["invalid"] += 1
+                continue
+            sig, receipt = signature(clean), f"sig:{signature(clean)}"
+            with self.connection() as c:
+                seen = c.execute("SELECT 1 FROM observations WHERE key=?", (receipt,)).fetchone()
+                row = c.execute("SELECT * FROM entries WHERE source=? AND environment=? AND entity=? AND kind=?",
+                                [clean[k] for k in SIGNED[:4]]).fetchone()
+            old = _decode(row) if row else None
+            if seen or (old and (old["signature"] or signature(old)) == sig):
+                result["existing"] += 1
+                continue
+            if old and (observed_at is None or observed_at <= old["updated_at"]):
+                result["kept"] += 1
+                continue
+            try:
+                saved = self.write(**clean, evidence=evidence, status=state, actor=actor, observed_at=observed_at,
+                                   observation=receipt, reason=f"Importado de {origin}"[:1000])
+            except KnowledgeError:
+                result["invalid"] += 1
+                continue
+            # Otro proceso pudo guardar lo mismo entre la comprobación y la escritura.
+            result[("updated" if old else "new") if saved["changed"] else "existing"] += 1
+        return result
 
     def edit(self, entry_id, *, expected_revision, title, content, topics, reason, stale=False):
         old = self.read(entry_id)
