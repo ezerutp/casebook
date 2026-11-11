@@ -175,6 +175,7 @@
           <button id="knowledge-import" data-tip="Importa los esquemas que ya quedaron en tus sesiones; no consulta servicios. Repetirlo no duplica entradas."><span class="btn-icon" data-icon="sessions" aria-hidden="true"></span><span>Desde sesiones</span></button>
           <input id="knowledge-file" type="file" accept=".json,application/json" hidden>
         </div>
+        <div id="knowledge-notice" class="knowledge-notice" role="status" aria-live="polite" tabindex="-1" hidden></div>
         <form id="knowledge-filters" class="knowledge-filters">
           <input name="q" type="search" class="search" placeholder="Buscar tabla, campo o concepto" aria-label="Buscar en el conocimiento">
           <div class="knowledge-filter-row">
@@ -265,6 +266,23 @@
       <button class="modal-close" aria-label="Cerrar historial">Cerrar</button>
     </div>
     <div class="modal-body"></div>
+  </dialog>
+
+  <dialog id="knowledge-import-modal" class="card-modal knowledge-import-modal" aria-labelledby="knowledge-import-title">
+    <div class="modal-bar">
+      <h2 id="knowledge-import-title">Importar conocimiento</h2>
+      <button class="icon-btn modal-close" aria-label="Cerrar" data-icon="close"></button>
+    </div>
+    <div class="modal-body">
+      <p class="modal-desc"></p>
+      <div class="knowledge-import-counts"></div>
+      <ul class="knowledge-import-items"></ul>
+      <p class="knowledge-import-note"></p>
+      <div class="modal-actions">
+        <button type="button" class="ghost modal-cancel">Cancelar</button>
+        <button type="button" class="primary modal-confirm">Importar</button>
+      </div>
+    </div>
   </dialog>
 
   <dialog id="slack-enable-modal" class="card-modal slack-enable-modal" aria-labelledby="slack-enable-title">

@@ -283,6 +283,10 @@ def other(tmp_path, name="amigo"):
     return KnowledgeStore(tmp_path / name / "knowledge.db")
 
 
+def counts(result):
+    return {k: v for k, v in result.items() if k != "items"}
+
+
 def fill(db, n, start=0):
     for i in range(start, start + n):
         db.write(**{**entry(), "entity": f"tabla_{i}", "title": f"Tabla {i}"})
@@ -318,11 +322,11 @@ def test_export_signs_entries_from_a_database_without_signatures(store):
 def test_import_only_adds_what_is_missing(store, tmp_path):
     mine, friend = store.knowledge.db, other(tmp_path)
     fill(mine, 30)
-    assert friend.import_entries(mine.export(), origin="a.json") == {"new": 30, "existing": 0, "updated": 0, "kept": 0, "invalid": 0}
+    assert counts(friend.import_entries(mine.export(), origin="a.json")) == {"new": 30, "existing": 0, "updated": 0, "kept": 0, "invalid": 0}
     fill(mine, 3, start=30)
     data = json.loads(json.dumps(mine.export()))  # como llega de un archivo
     assert friend.import_entries(data, origin="b.json")["new"] == 3
-    assert friend.import_entries(data, origin="b.json") == {"new": 0, "existing": 33, "updated": 0, "kept": 0, "invalid": 0}
+    assert counts(friend.import_entries(data, origin="b.json")) == {"new": 0, "existing": 33, "updated": 0, "kept": 0, "invalid": 0}
     assert friend.search()["total"] == 33
     item = friend.read(friend.search("tabla_31")["entries"][0]["id"])
     assert item["status"] == "pending" and item["evidence"]["imported_from"] == "b.json"
@@ -369,7 +373,7 @@ def test_import_does_not_trust_the_file(store, tmp_path):
     data["entries"][1] = {"source": "mysql"}
     data["entries"].append({**entry(), "entity": "x", "status": "inventado"})
     result = friend.import_entries(data, origin="b.json")
-    assert result == {"new": 0, "existing": 0, "updated": 1, "kept": 0, "invalid": 2}
+    assert counts(result) == {"new": 0, "existing": 0, "updated": 1, "kept": 0, "invalid": 2}
     item = friend.read(1)
     assert "client@example.com" not in item["content"] and item["updated_at"] < "2999"
     with pytest.raises(KnowledgeError, match="más nueva"):
@@ -407,3 +411,17 @@ def test_cli_export_and_import(store, tmp_path, monkeypatch, capsys):
     assert cli.main(["knowledge", "import", str(path)]) == 0
     assert "2 ya las tenías" in capsys.readouterr().out
     assert cli.main(["knowledge", "pull"]) == 1
+
+
+def test_dry_run_counts_without_writing_and_lists_changes(store, tmp_path):
+    mine, friend = store.knowledge.db, other(tmp_path)
+    fill(mine, 3)
+    data = mine.export()
+    data["entries"].append(dict(data["entries"][0]))  # repetida en el mismo archivo
+    preview = friend.import_entries(data, origin="a.json", dry_run=True)
+    assert counts(preview) == {"new": 3, "existing": 1, "updated": 0, "kept": 0, "invalid": 0}
+    assert [i["id"] for i in preview["items"]] == [None, None, None] and friend.search()["total"] == 0
+    done = friend.import_entries(data, origin="a.json")
+    assert counts(done) == counts(preview)
+    assert {i["title"] for i in done["items"]} == {"Tabla 0", "Tabla 1", "Tabla 2"}
+    assert all(friend.read(i["id"])["title"] == i["title"] for i in done["items"])

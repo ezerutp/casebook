@@ -247,13 +247,22 @@ class KnowledgeStore:
                    for r in rows]
         return {FORMAT: 1, "exported_at": now(), "entries": entries}
 
-    def import_entries(self, data: Any, *, origin: str, actor="import", status: str | None = None) -> dict:
+    def import_entries(self, data: Any, *, origin: str, actor="import", status: str | None = None,
+                       dry_run: bool = False) -> dict:
         """Importa un archivo exportado (o la lista semilla de un pack) sin duplicar. La firma se recalcula: no se
         confía en la del archivo. Una firma ya vista se omite, aunque la entrada se haya editado o eliminado aquí.
         Si la entidad ya existe con otro contenido gana la más reciente; una entrada sin fecha nunca pisa la local.
-        `status` fuerza el estado de lo importado (las semillas entran como pending)."""
+        `status` fuerza el estado de lo importado (las semillas entran como pending). `dry_run` solo cuenta.
+        `items` lista (hasta 50) las entradas nuevas o actualizadas, para revisarlas o enlazarlas."""
         items, exported_at = parse_export(data)
         result = {"new": 0, "existing": 0, "updated": 0, "kept": 0, "invalid": 0}
+        changed: list[dict] = []
+        planned: set[str] = set()
+
+        def note(change, entry_id, clean):
+            if len(changed) < 50:
+                changed.append({"id": entry_id, "change": change, "title": clean["title"], "entity": clean["entity"],
+                                "source": clean["source"], "environment": clean["environment"], "kind": clean["kind"]})
         for item in items:
             try:
                 clean = _clean(*(item[k] for k in SIGNED[:-1]), item.get("topics", []))
@@ -271,11 +280,16 @@ class KnowledgeStore:
                 row = c.execute("SELECT * FROM entries WHERE source=? AND environment=? AND entity=? AND kind=?",
                                 [clean[k] for k in SIGNED[:4]]).fetchone()
             old = _decode(row) if row else None
-            if seen or (old and (old["signature"] or signature(old)) == sig):
+            if seen or sig in planned or (old and (old["signature"] or signature(old)) == sig):
                 result["existing"] += 1
                 continue
             if old and (observed_at is None or observed_at <= old["updated_at"]):
                 result["kept"] += 1
+                continue
+            if dry_run:
+                planned.add(sig)
+                result["updated" if old else "new"] += 1
+                note("updated" if old else "new", old["id"] if old else None, clean)
                 continue
             try:
                 saved = self.write(**clean, evidence=evidence, status=state, actor=actor, observed_at=observed_at,
@@ -284,8 +298,11 @@ class KnowledgeStore:
                 result["invalid"] += 1
                 continue
             # Otro proceso pudo guardar lo mismo entre la comprobación y la escritura.
-            result[("updated" if old else "new") if saved["changed"] else "existing"] += 1
-        return result
+            change = ("updated" if old else "new") if saved["changed"] else "existing"
+            result[change] += 1
+            if saved["changed"]:
+                note(change, saved["id"], clean)
+        return {**result, "items": changed}
 
     def edit(self, entry_id, *, expected_revision, title, content, topics, reason, stale=False):
         old = self.read(entry_id)

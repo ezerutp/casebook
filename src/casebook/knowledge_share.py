@@ -95,9 +95,10 @@ def _load(path: Path) -> list:
         raise KnowledgeError(f"{path.name}: {exc}") from None
 
 
-def pull(db: KnowledgeStore, target: Remote, interactive: bool = False) -> dict:
-    """Trae la rama e importa lo que falta. Devuelve el resumen de import_entries más `files`."""
-    total = {"new": 0, "existing": 0, "updated": 0, "kept": 0, "invalid": 0, "files": 0}
+def pull(db: KnowledgeStore, target: Remote, interactive: bool = False, dry_run: bool = False) -> dict:
+    """Trae la rama e importa lo que falta (con dry_run, solo cuenta). Devuelve el resumen de import_entries más
+    `files`."""
+    total = {"new": 0, "existing": 0, "updated": 0, "kept": 0, "invalid": 0, "files": 0, "items": []}
     with tempfile.TemporaryDirectory(prefix="casebook-knowledge-") as tmp:
         if not _clone(target, Path(tmp), interactive):
             raise KnowledgeError(f"la rama {target.branch} todavía no existe en {target.repo}: "
@@ -105,10 +106,11 @@ def pull(db: KnowledgeStore, target: Remote, interactive: bool = False) -> dict:
         for path in sorted(Path(tmp).glob("*.json")):
             if path.is_symlink():
                 continue
-            result = db.import_entries(_load(path), origin=f"{target.branch} · {path.name}")
+            result = db.import_entries(_load(path), origin=f"{target.branch} · {path.name}", dry_run=dry_run)
             total["files"] += 1
             for key, value in result.items():
                 total[key] += value
+    total["items"] = total["items"][:50]
     return total
 
 

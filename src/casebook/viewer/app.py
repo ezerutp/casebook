@@ -392,8 +392,8 @@ def create_app(store: Store, cfg: Config | None = None, served_by: str = "viewer
                             headers={"content-disposition": f'attachment; filename="{name}"'})
 
     @app.post("/api/knowledge/import-file", dependencies=[Depends(require_viewer)])
-    def knowledge_import_file(data: Any = Body(...), name: str = "archivo"):
-        return knowledge_call(store.knowledge.db.import_entries, data, origin=name[:200] or "archivo")
+    def knowledge_import_file(data: Any = Body(...), name: str = "archivo", dry_run: bool = False):
+        return knowledge_call(store.knowledge.db.import_entries, data, origin=name[:200] or "archivo", dry_run=dry_run)
 
     @app.get("/api/knowledge/share")
     def knowledge_share_info() -> dict:
@@ -407,13 +407,13 @@ def create_app(store: Store, cfg: Config | None = None, served_by: str = "viewer
         return {"configured": target is not None, "branch": target.branch if target else None}
 
     @app.post("/api/knowledge/pull", dependencies=[Depends(require_viewer)])
-    def knowledge_pull():
+    def knowledge_pull(dry_run: bool = False):
         from .. import knowledge_share
 
         target = knowledge_call(knowledge_share.remote)
         if target is None:
             raise HTTPException(422, "El pack activo no declara [pack.knowledge]: no hay rama del equipo")
-        return knowledge_call(knowledge_share.pull, store.knowledge.db, target)
+        return knowledge_call(knowledge_share.pull, store.knowledge.db, target, dry_run=dry_run)
 
     @app.get("/api/knowledge/{entry_id}")
     def knowledge_read(entry_id: int, history_offset: int = 0, revision: int | None = None):

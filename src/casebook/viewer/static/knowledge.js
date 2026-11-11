@@ -295,48 +295,138 @@ const knowledgeView = (() => {
     if (editing) { message.textContent = "Guarda o cancela la corrección antes de actualizar."; return; }
     void show();
   };
+  const noticeBox = document.querySelector("#knowledge-notice");
+  const sourceLabel = r => `${sourceNames[r.source] || r.source} · ${r.environment}`;
+  // El resultado de importar queda fijo arriba hasta cerrarlo, con enlaces a lo que cambió.
+  function notice(title, text, tone = "info", items = []) {
+    const close = el("button", "", "icon-btn");
+    close.type = "button"; close.setAttribute("aria-label", "Cerrar aviso"); close.dataset.icon = "close";
+    close.onclick = () => { noticeBox.hidden = true; };
+    const body = [el("strong", title), el("p", text)];
+    const linked = items.filter(i => i.id);
+    if (linked.length) {
+      const list = el("ul", "");
+      for (const item of linked.slice(0, 8)) {
+        const li = el("li", "");
+        const a = el("a", item.title);
+        a.href = `#/knowledge/${item.id}`;
+        li.append(a, ` · ${item.change === "updated" ? "actualizada" : "nueva"}`);
+        list.append(li);
+      }
+      if (linked.length > 8) list.append(el("li", `y ${linked.length - 8} más`));
+      body.push(list);
+    }
+    noticeBox.className = `knowledge-notice ${tone}`;
+    noticeBox.replaceChildren(...body, close);
+    fillIcons(noticeBox);
+    noticeBox.hidden = false;
+    noticeBox.style.animation = "none"; void noticeBox.offsetWidth; noticeBox.style.animation = "";
+    noticeBox.scrollIntoView({block: "nearest", behavior: "smooth"});
+    noticeBox.focus({preventScroll: true});
+  }
+  function counts(r) {
+    const parts = [`${r.new} nuevas`];
+    if (r.updated) parts.push(`${r.updated} actualizadas`);
+    parts.push(`${r.existing} ya las tenías`);
+    if (r.kept) parts.push(`${r.kept} más viejas que las tuyas`);
+    if (r.invalid) parts.push(`${r.invalid} inválidas`);
+    return parts.join(" · ") + ".";
+  }
+  function resultNotice(what, r) {
+    const changed = r.new + r.updated;
+    const tone = r.invalid ? "warn" : changed ? "ok" : "info";
+    const title = changed ? `${what}: ${changed} ${changed === 1 ? "entrada importada" : "entradas importadas"}` : `${what}: no había nada nuevo`;
+    notice(title, counts(r), tone, r.items || []);
+  }
+  // Vista previa antes de importar: resuelve true si la persona confirma.
+  const modal = document.querySelector("#knowledge-import-modal");
+  function confirmImport(what, preview) {
+    const changed = preview.new + preview.updated;
+    modal.querySelector("#knowledge-import-title").textContent = what;
+    modal.querySelector(".modal-desc").textContent = changed
+      ? "Revisa qué va a entrar antes de importar. Las entradas que ya tienes no se tocan."
+      : "No hay nada nuevo para importar: ya tienes todo lo de este origen.";
+    const chips = [["new", "nuevas", "ok"], ["updated", "actualizadas", "warn"], ["existing", "ya las tenías", "none"],
+      ["kept", "más viejas que las tuyas", "none"], ["invalid", "inválidas", "fail"]]
+      .filter(([key]) => preview[key] || key === "new" || key === "existing")
+      .map(([key, label, tone]) => el("span", `${preview[key]} ${label}`, `state-tag ${tone}`));
+    modal.querySelector(".knowledge-import-counts").replaceChildren(...chips);
+    const rows = (preview.items || []).map(item => {
+      const li = el("li", "");
+      li.append(el("span", item.change === "updated" ? "Actualiza" : "Nueva", `state-tag ${item.change === "updated" ? "warn" : "ok"}`),
+        el("span", item.title, "title"), el("small", sourceLabel(item)));
+      return li;
+    });
+    if (changed > rows.length) rows.push(el("li", `y ${changed - rows.length} más`));
+    modal.querySelector(".knowledge-import-items").replaceChildren(...rows);
+    const notes = [];
+    if (preview.updated) notes.push("Las actualizadas reemplazan tu versión por una más reciente; la tuya queda en el historial.");
+    if (preview.invalid) notes.push("Las inválidas se omiten.");
+    modal.querySelector(".knowledge-import-note").textContent = notes.join(" ");
+    const confirm = modal.querySelector(".modal-confirm");
+    const cancel = modal.querySelector(".modal-cancel");
+    confirm.hidden = !changed;
+    confirm.textContent = `Importar ${changed}`;
+    cancel.textContent = changed ? "Cancelar" : "Cerrar";
+    return new Promise(resolve => {
+      let answer = false;
+      const finish = value => { answer = value; if (modal.open) modal.close(); };
+      confirm.onclick = () => finish(true);
+      cancel.onclick = modal.querySelector(".modal-close").onclick = () => finish(false);
+      modal.onclick = e => { if (e.target === modal) finish(false); };
+      modal.addEventListener("close", () => resolve(answer), {once: true});
+      modal.showModal();
+      (changed ? confirm : cancel).focus();
+    });
+  }
+  async function importWithPreview(button, what, busy, run) {
+    if (editing) { notice("Hay una corrección sin guardar", "Guárdala o cancélala antes de importar.", "warn"); return; }
+    button.disabled = true;
+    message.textContent = busy;
+    try {
+      const preview = await run(true);
+      message.textContent = "";
+      if (!await confirmImport(what, preview)) return;
+      message.textContent = busy;
+      const result = await run(false);
+      message.textContent = "";
+      await load();
+      resultNotice(what, result);
+    } catch (error) {
+      message.textContent = "";
+      notice(`${what}: no se pudo`, error.message, "fail");
+    } finally { button.disabled = false; }
+  }
   document.querySelector("#knowledge-import").onclick = async e => {
     const button = e.currentTarget; button.disabled = true;
     message.textContent = "Importando metadatos locales; no se consultan servicios…";
     try {
       const result = await request("/api/knowledge/import", {method: "POST", headers: {"x-casebook-viewer": "1"}});
+      message.textContent = "";
       await load();
-      message.textContent = `${result.changed} actualizaciones de conocimiento. ${result.warnings} observaciones no pudieron importarse. Repetir la importación no duplica entradas.`;
-    } catch(error) { fail(error); } finally { button.disabled = false; }
+      notice(result.changed ? `Desde sesiones: ${result.changed} actualizaciones` : "Desde sesiones: no había nada nuevo",
+        "Repetir la importación no duplica entradas." + (result.warnings ? ` ${result.warnings} observaciones no pudieron importarse.` : ""),
+        result.warnings ? "warn" : result.changed ? "ok" : "info");
+    } catch(error) { message.textContent = ""; notice("Desde sesiones: no se pudo", error.message, "fail"); }
+    finally { button.disabled = false; }
   };
-  function counts(r) {
-    const parts = [`${r.new} nuevas`, `${r.existing} ya las tenías`];
-    if (r.updated) parts.push(`${r.updated} actualizadas`);
-    if (r.kept) parts.push(`${r.kept} más viejas que las tuyas`);
-    if (r.invalid) parts.push(`${r.invalid} inválidas`);
-    return parts.join(" · ") + ".";
-  }
   document.querySelector("#knowledge-export").onclick = () => { location.href = "/api/knowledge/export"; };
   const fileInput = document.querySelector("#knowledge-file");
-  document.querySelector("#knowledge-import-file").onclick = () => fileInput.click();
+  const importFile = document.querySelector("#knowledge-import-file");
+  importFile.onclick = () => fileInput.click();
   fileInput.onchange = async () => {
     const file = fileInput.files[0];
     fileInput.value = "";
     if (!file) return;
-    message.textContent = `Importando ${file.name}…`;
-    try {
-      const result = await request(`/api/knowledge/import-file?name=${encodeURIComponent(file.name)}`,
-        {method: "POST", headers: {"content-type": "application/json", "x-casebook-viewer": "1"}, body: await file.text()});
-      await load();
-      message.textContent = `Importado: ${counts(result)}`;
-    } catch(error) { fail(error); }
+    const body = await file.text();
+    await importWithPreview(importFile, `Importar ${file.name}`, `Leyendo ${file.name}…`, dryRun =>
+      request(`/api/knowledge/import-file?name=${encodeURIComponent(file.name)}&dry_run=${dryRun}`,
+        {method: "POST", headers: {"content-type": "application/json", "x-casebook-viewer": "1"}, body}));
   };
   const pull = document.querySelector("#knowledge-pull");
   request("/api/knowledge/share").then(info => { pull.hidden = !info.configured; }).catch(() => {});
-  pull.onclick = async () => {
-    pull.disabled = true;
-    message.textContent = "Trayendo el conocimiento del equipo…";
-    try {
-      const result = await request("/api/knowledge/pull", {method: "POST", headers: {"x-casebook-viewer": "1"}});
-      await load();
-      message.textContent = `Traído del equipo: ${counts(result)}`;
-    } catch(error) { fail(error); } finally { pull.disabled = false; }
-  };
+  pull.onclick = () => importWithPreview(pull, "Traer del equipo", "Consultando la rama del equipo…", dryRun =>
+    request(`/api/knowledge/pull?dry_run=${dryRun}`, {method: "POST", headers: {"x-casebook-viewer": "1"}}));
   window.addEventListener("beforeunload", e => { if (editing) { e.preventDefault(); e.returnValue = ""; } });
   return {show};
 })();

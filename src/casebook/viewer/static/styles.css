@@ -942,6 +942,29 @@ tr:hover td { background: var(--code-bg); }
 .knowledge-toolbar { display: grid; grid-template-columns: 1fr 1fr; gap: 6px; margin: 0 0 12px; }
 .knowledge-toolbar button { font-size: 12px; padding: 4px 8px; justify-content: center; }
 .knowledge-toolbar:has(#knowledge-pull[hidden]) #knowledge-import { grid-column: span 2; }
+.knowledge-notice { position: relative; margin: 0 0 12px; padding: 10px 32px 10px 12px; border-radius: 8px;
+  border: 1px solid var(--border); border-left: 3px solid var(--accent); background: var(--accent-soft);
+  font-size: 12.5px; line-height: 1.45; outline: none; animation: fresh 1.2s ease-out; }
+.knowledge-notice.ok { border-left-color: var(--ok); background: var(--ok-soft); }
+.knowledge-notice.warn { border-left-color: var(--run); background: var(--run-soft); }
+.knowledge-notice.fail { border-left-color: var(--fail); background: var(--fail-soft); }
+.knowledge-notice strong { display: block; margin-bottom: 2px; }
+.knowledge-notice p { margin: 0; color: var(--muted); }
+.knowledge-notice ul { margin: 6px 0 0; padding-left: 16px; }
+.knowledge-notice a { color: var(--accent); }
+.knowledge-notice .icon-btn { position: absolute; top: 6px; right: 6px; }
+.knowledge-import-modal { width: min(520px, calc(100vw - 32px)); }
+.knowledge-import-counts { display: flex; flex-wrap: wrap; gap: 6px; margin-bottom: 12px; }
+.knowledge-import-items { list-style: none; margin: 0 0 12px; padding: 0; max-height: 260px; overflow-y: auto;
+  border: 1px solid var(--border); border-radius: 8px; }
+.knowledge-import-items:empty { display: none; }
+.knowledge-import-items li { display: flex; align-items: center; gap: 8px; padding: 7px 10px; font-size: 12.5px;
+  border-bottom: 1px solid var(--border); }
+.knowledge-import-items li:last-child { border-bottom: 0; }
+.knowledge-import-items .title { flex: 1; min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.knowledge-import-items small { color: var(--muted); font-family: var(--mono); font-size: 11px; }
+.knowledge-import-note { margin: 0 0 12px; color: var(--muted); font-size: 12px; }
+.knowledge-import-note:empty { display: none; }
 #knowledge-detail .skill-title h2 { font-family: var(--sans); word-break: normal; overflow-wrap: anywhere; }
 #knowledge-detail h3 { margin: 0 0 8px; font-size: 11.5px; letter-spacing: 0.04em; text-transform: uppercase; color: var(--muted); }
 .knowledge-note { margin: 0; color: var(--muted); font-size: 12.5px; }
