@@ -81,6 +81,10 @@
   function show(el) {
     if (!hasContent(el) || !el.isConnected) return hide();
     current = el;
+    // Un <dialog> modal está en la capa superior y taparía al tooltip del body: dentro de uno, el tooltip
+    // se muda a ese dialog mientras se muestra.
+    const host = el.closest("dialog[open]") || document.body;
+    if (tip.parentNode !== host) host.append(tip);
     fill(el);
     tip.classList.add("measuring");
     place(el);

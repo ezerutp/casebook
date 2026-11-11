@@ -47,6 +47,18 @@ class SlackWatchEnable(BaseModel):
     lookback_minutes: int = 0
 
 
+class SlackDay(BaseModel):
+    oldest: float  # inicio del día en el reloj del navegador (epoch)
+    latest: float
+    refresh: bool = False  # volver a leer el día
+    revalidate: bool = False  # releer hoy si la lista tiene más de unos minutos (al abrir o cambiar de día)
+
+
+class SlackPick(BaseModel):
+    ts: str
+    reanalyze: bool = False
+
+
 class LoopUpdate(BaseModel):
     enabled: bool
     revision: int | None = None  # ignored; kept for older viewers
@@ -263,6 +275,33 @@ def create_app(store: Store, cfg: Config | None = None, served_by: str = "viewer
         if not watcher.analyze_latest():
             raise HTTPException(409, "ya estoy buscando el último mensaje")
         return {"started": True}
+
+    @app.post("/api/slack/day", dependencies=[Depends(require_viewer)])
+    def slack_day(body: SlackDay) -> dict:
+        """Los mensajes de un día para elegir cuál analizar. La primera vez los lee en segundo plano
+        (status="searching"): el visor vuelve a pedir hasta que estén. POST porque leer Slack gasta un análisis."""
+        watcher = getattr(app.state, "watcher", None)
+        if watcher is None:
+            raise HTTPException(503, "el vigilante de Slack no corre en este proceso; reinicia el visor")
+        if not 0 < body.latest - body.oldest <= 2 * 86400:
+            raise HTTPException(422, "el rango tiene que ser de un día")
+        return watcher.day_messages(body.oldest, body.latest, body.refresh, body.revalidate)
+
+    @app.post("/api/slack/analyze-message", dependencies=[Depends(require_viewer)], status_code=202)
+    def slack_analyze_message(body: SlackPick) -> dict:
+        """Analiza un mensaje elegido de la lista de un día. No repite uno en curso ni uno ya analizado, salvo
+        reanalyze (en la misma sesión)."""
+        from .. import slack_watch
+
+        watcher = getattr(app.state, "watcher", None)
+        if watcher is None:
+            raise HTTPException(503, "el vigilante de Slack no corre en este proceso; reinicia el visor")
+        if not slack_watch.TS.match(body.ts):
+            raise HTTPException(422, "ts inválido")
+        try:
+            return watcher.analyze_message(body.ts, body.reanalyze)
+        except KeyError:
+            raise HTTPException(404, "ese mensaje no está en la lista leída; vuelve a cargar el día") from None
 
     @app.get("/api/slack/thread/{session_id}")
     def slack_thread(session_id: int) -> dict:

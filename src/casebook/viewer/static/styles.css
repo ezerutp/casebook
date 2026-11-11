@@ -304,8 +304,25 @@ button.ghost:hover { color: var(--text); background: var(--code-bg); }
 .slack-alert-actions button { margin-left: auto; padding: 2px 8px; font-size: 12px; }
 .thread-check.busy .btn-icon svg { animation: spin 0.9s linear infinite; }
 .thread-check:disabled { cursor: progress; }
-.thread-status { margin: -2px 0 8px; font-size: 12.5px; color: var(--muted); }
-.thread-status .slack-alert { margin-top: 0; max-width: 640px; }
+/* Panel «Hilo de Slack» de la columna derecha: con el color de Slack para distinguirlo de los paneles del resumen. */
+.panel.thread-panel { border-color: color-mix(in srgb, var(--svc-slack) 45%, var(--border)); }
+.panel.thread-panel h2 { display: flex; align-items: center; gap: 6px; color: var(--svc-slack); }
+.thread-panel h2 .btn-icon, .thread-panel h2 .btn-icon svg { width: 14px; height: 14px; }
+.thread-hint { margin: 0; font-size: 12.5px; color: var(--muted); line-height: 1.45; }
+/* El botón del panel, en el color de Slack como el resto del panel (el de «Analizar el último mensaje» es el de
+   acento del visor). Misma forma y estados que .slack-latest. */
+.thread-panel .thread-check {
+  color: var(--svc-slack);
+  background: color-mix(in srgb, var(--svc-slack) 12%, var(--panel));
+  border-color: color-mix(in srgb, var(--svc-slack) 40%, transparent);
+}
+.thread-panel .thread-check:hover:not(:disabled) {
+  background: color-mix(in srgb, var(--svc-slack) 20%, var(--panel));
+  border-color: var(--svc-slack);
+}
+.thread-panel .thread-check:focus-visible { outline-color: var(--svc-slack); }
+.thread-status { margin: 8px 0 0; font-size: 12.5px; color: var(--muted); line-height: 1.45; }
+.thread-status .slack-alert { margin-top: 0; }
 .link-btn { border: 0; background: none; padding: 0; color: var(--accent); font: inherit; cursor: pointer; text-decoration: underline; }
 .link-btn:hover { background: none; color: color-mix(in srgb, var(--accent) 80%, var(--text)); }
 .slack-latest {
@@ -1251,4 +1268,251 @@ tr:hover td { background: var(--code-bg); }
 /* Not enough room for the filters and the Loop pill on one line: icon filters keep only icon and count. */
 .filter-row.compact .chip-filter:has(.svc-icon) .chip-label {
   position:absolute; width:1px; height:1px; overflow:hidden; clip:rect(0 0 0 0); white-space:nowrap;
+}
+
+/* --- análisis automático en curso (slack.progress) ------------------------------------------------------- */
+/* El indicador: un punto con onda expansiva en el color de Slack. Lo comparten la tarjeta, el panel y la lista. */
+.run-orb { position: relative; display: inline-block; width: 10px; height: 10px; flex: none; }
+.run-orb::before { content: ""; position: absolute; inset: 1px; border-radius: 50%; background: var(--svc-slack); }
+.run-orb::after {
+  content: ""; position: absolute; inset: -1px; border-radius: 50%; border: 2px solid var(--svc-slack);
+  animation: run-ring 1.8s cubic-bezier(0.2, 0.6, 0.3, 1) infinite;
+}
+@keyframes run-ring { from { transform: scale(0.55); opacity: 0.85; } to { transform: scale(2.1); opacity: 0; } }
+
+.card.run { border-left-color: var(--svc-slack); padding-bottom: 10px; }
+.card.run.running {
+  border-color: color-mix(in srgb, var(--svc-slack) 35%, var(--border));
+  border-left-color: var(--svc-slack);
+  background: linear-gradient(100deg, color-mix(in srgb, var(--svc-slack) 9%, var(--panel)) 0%, var(--panel) 55%);
+}
+.card.run .card-head { gap: 10px; }
+.card.run .run-orb { width: 12px; height: 12px; margin: 0 2px; }
+.run-meta {
+  font-family: var(--mono); font-size: 11px; color: var(--muted); padding: 1px 8px; border-radius: 999px;
+  border: 1px solid var(--border); background: var(--bg); white-space: nowrap;
+}
+.card-head .run-clock { font-family: var(--mono); font-size: 12.5px; color: var(--text); min-width: 3.2em; text-align: right; }
+.run.done .run-clock, .run.failed .run-clock { color: var(--muted); font-family: var(--sans); font-size: 12px; }
+
+/* «Ahora»: el paso en curso con un brillo que lo recorre; mientras piensa, tres puntos que rebotan. */
+.run-now { display: flex; align-items: baseline; gap: 8px; margin: 10px 0 6px; font-size: 13.5px; min-width: 0; }
+.run-now-label {
+  font-size: 10.5px; font-weight: 700; letter-spacing: 0.06em; text-transform: uppercase; color: var(--svc-slack);
+  flex: none;
+}
+.run-now-text {
+  font-weight: 600; min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap;
+  background: linear-gradient(90deg, var(--text) 0%, var(--text) 35%, var(--svc-slack) 50%, var(--text) 65%, var(--text) 100%);
+  background-size: 250% 100%; -webkit-background-clip: text; background-clip: text; color: transparent;
+  animation: run-shimmer 2.4s linear infinite;
+}
+@keyframes run-shimmer { from { background-position: 100% 0; } to { background-position: -150% 0; } }
+.run-dots { display: none; gap: 3px; align-self: center; }
+.run.thinking .run-dots { display: inline-flex; }
+.run-dots i { width: 4px; height: 4px; border-radius: 50%; background: var(--svc-slack); animation: run-dot 1.2s ease-in-out infinite; }
+.run-dots i:nth-child(2) { animation-delay: 0.15s; }
+.run-dots i:nth-child(3) { animation-delay: 0.3s; }
+@keyframes run-dot { 0%, 60%, 100% { transform: translateY(0); opacity: 0.4; } 30% { transform: translateY(-4px); opacity: 1; } }
+.run.done .run-now, .run.failed .run-now { display: none; }
+
+/* El recorrido: un riel vertical con un ícono por tipo de paso y el minuto en que ocurrió. */
+.run-steps {
+  list-style: none; margin: 4px 0 0; padding: 2px 0 2px; max-height: 232px; overflow-y: auto; position: relative;
+  display: grid; gap: 1px; scrollbar-width: thin;
+}
+.run-steps::before {
+  content: ""; position: absolute; left: 10px; top: 6px; bottom: 6px; width: 1px;
+  background: linear-gradient(var(--border), color-mix(in srgb, var(--svc-slack) 50%, var(--border)));
+}
+.run-step {
+  position: relative; display: grid; grid-template-columns: 22px minmax(0, 1fr) auto; align-items: center; gap: 8px;
+  padding: 3px 6px 3px 0; border-radius: 6px; font-size: 12.5px; color: var(--muted);
+}
+.run-ico {
+  width: 21px; height: 21px; display: grid; place-items: center; border-radius: 50%; position: relative; z-index: 1;
+  background: var(--panel); border: 1px solid var(--border); color: var(--muted);
+}
+.run-ico svg { width: 11px; height: 11px; }
+.run-step .txt { min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.run-step .at { font-family: var(--mono); font-size: 11px; color: var(--muted); opacity: 0.8; }
+.run-step.i-os .run-ico { color: var(--svc-os); }
+.run-step.i-cw .run-ico { color: var(--svc-cw); }
+.run-step.i-db .run-ico, .run-step.i-knowledge .run-ico { color: var(--svc-db); }
+.run-step.i-slack .run-ico, .run-step.i-review .run-ico { color: var(--svc-slack); }
+.run-step.i-note .run-ico, .run-step.i-write .run-ico { color: var(--svc-note); }
+.run-step.i-code .run-ico, .run-step.i-skill .run-ico { color: var(--accent); }
+.run-step.now { color: var(--text); background: color-mix(in srgb, var(--svc-slack) 8%, transparent); }
+.run-step.now .txt { font-weight: 600; }
+.run-step.now .run-ico { border-color: var(--svc-slack); box-shadow: 0 0 0 3px color-mix(in srgb, var(--svc-slack) 18%, transparent); }
+.run.running .run-step:last-child { animation: run-step-in 0.35s ease-out; }
+@keyframes run-step-in { from { opacity: 0; transform: translateX(-6px); } }
+
+/* Al terminar: el estado en el indicador y los pasos plegados detrás de «Ver los N pasos». */
+.run.done { border-left-color: var(--ok); }
+.run.failed { border-left-color: var(--fail); }
+.run.done .run-orb::after, .run.failed .run-orb::after { display: none; }
+.run.done .run-orb::before { background: var(--ok); }
+.run.failed .run-orb::before { background: var(--fail); }
+.run-toggle { margin-top: 6px; font-size: 12.5px; }
+
+/* Compactar: queda la cabecera y «Ahora» (con cuántos pasos lleva); la flecha gira según el estado. */
+.run-fold { width: 24px; height: 24px; padding: 0; display: grid; place-items: center; color: var(--muted); }
+.run-fold svg { width: 14px; height: 14px; transition: transform 0.2s ease; transform: rotate(90deg); }
+.run.folded .run-fold svg { transform: rotate(0deg); }
+.run.folded .run-steps { display: none; }
+.run.done:not(.folded) .run-steps, .run.failed:not(.folded) .run-steps { margin-top: 8px; }
+.run-count { display: none; margin-left: auto; font-size: 11.5px; color: var(--muted); font-variant-numeric: tabular-nums; white-space: nowrap; }
+.run.running.folded .run-count { display: inline; }
+.run.running.folded .run-now { margin-bottom: 0; }
+
+/* Panel de Slack y lista de sesiones: el mismo indicador. */
+.slack-status.slack-running { display: flex; align-items: center; flex-wrap: wrap; gap: 4px 8px; color: var(--text); }
+.slack-running .what { flex: 1 1 100%; min-width: 0; }
+.slack-running .run-orb { margin-right: 7px; vertical-align: 0.5px; }
+.slack-running strong { font-weight: 600; }
+.slack-run-clock { font-family: var(--mono); font-size: 12px; color: var(--svc-slack); }
+.slack-running .queue { color: var(--muted); font-size: 12px; }
+.slack-running .slack-open { margin-left: auto; }
+
+/* «Ver sesión»: un botón chico con flecha, no un link suelto. */
+.slack-open {
+  display: inline-flex; align-items: center; gap: 2px; padding: 1px 6px 1px 9px; border-radius: 999px;
+  font-size: 12px; font-weight: 600; line-height: 1.6; text-decoration: none; white-space: nowrap;
+  color: var(--accent); background: var(--accent-soft); border: 1px solid color-mix(in srgb, var(--accent) 30%, transparent);
+  transition: background 0.15s, border-color 0.15s;
+}
+.slack-open:hover { background: color-mix(in srgb, var(--accent) 18%, var(--panel)); border-color: var(--accent); }
+.slack-open:focus-visible { outline: 2px solid var(--accent); outline-offset: 2px; }
+.slack-open-arrow { display: inline-flex; width: 12px; height: 12px; transition: transform 0.15s; }
+.slack-open-arrow svg { width: 100%; height: 100%; }
+.slack-open:hover .slack-open-arrow { transform: translateX(2px); }
+#slack-manual { display: flex; flex-wrap: wrap; align-items: center; gap: 6px 8px; }
+
+/* Panel de Slack plegado: la luz que respira si la vigilancia está activa. */
+.slack-light { display: none; width: 8px; height: 8px; border-radius: 50%; margin-left: 2px; background: var(--ok); }
+.slack-panel.collapsed.watching .slack-light { display: inline-block; animation: slack-breathe 2.8s ease-in-out infinite; }
+.slack-panel.collapsed.analyzing .slack-light { display: inline-block; background: var(--svc-slack); animation-duration: 1.4s; }
+@keyframes slack-breathe {
+  0%, 100% { opacity: 0.35; box-shadow: 0 0 0 0 color-mix(in srgb, currentColor 0%, transparent); }
+  50% { opacity: 1; box-shadow: 0 0 6px 1px color-mix(in srgb, var(--ok) 55%, transparent); }
+}
+.slack-panel.collapsed.analyzing .slack-light { animation-name: slack-breathe-run; }
+@keyframes slack-breathe-run {
+  0%, 100% { opacity: 0.45; box-shadow: none; }
+  50% { opacity: 1; box-shadow: 0 0 7px 1px color-mix(in srgb, var(--svc-slack) 60%, transparent); }
+}
+@media (prefers-reduced-motion: reduce) {
+  .slack-panel.collapsed .slack-light { animation: none; opacity: 1; }
+}
+#sessions a.analyzing { box-shadow: inset 2px 0 0 var(--svc-slack); }
+#sessions a.analyzing .sub { color: var(--svc-slack); }
+
+@media (prefers-reduced-motion: reduce) {
+  .run-orb::after, .run-dots i, .run.running .run-step:last-child { animation: none; }
+  .run-now-text { animation: none; background: none; color: var(--text); }
+}
+
+/* --- «Elegir un mensaje…» --------------------------------------------------------------------------------- */
+.slack-pick {
+  width: 100%; justify-content: center; margin-top: 6px; padding: 6px 10px; font-size: 12.5px; font-weight: 600;
+  color: var(--svc-slack); background: transparent;
+  border: 1px dashed color-mix(in srgb, var(--svc-slack) 45%, var(--border));
+  transition: background 0.15s, border-color 0.15s;
+}
+.slack-pick:hover { background: color-mix(in srgb, var(--svc-slack) 9%, var(--panel)); border-style: solid; border-color: var(--svc-slack); }
+.slack-pick .btn-icon, .slack-pick .btn-icon svg { width: 14px; height: 14px; }
+
+.slack-pick-modal { width: min(760px, calc(100vw - 32px)); height: min(680px, calc(100vh - 64px)); }
+.slack-pick-modal .modal-bar h2 { display: flex; align-items: center; gap: 8px; }
+.slack-pick-modal .modal-bar h2 .btn-icon { color: var(--svc-slack); }
+.slack-pick-modal .modal-bar h2 .btn-icon, .slack-pick-modal .modal-bar h2 .btn-icon svg { width: 16px; height: 16px; }
+
+.pick-toolbar {
+  display: flex; align-items: center; gap: 12px; flex-wrap: wrap; padding: 10px 14px;
+  border-bottom: 1px solid var(--border); background: var(--bg);
+}
+.pick-day { display: flex; align-items: center; gap: 4px; }
+.pick-day .icon-btn { width: 28px; height: 28px; border-radius: 6px; }
+.pick-day .icon-btn:hover:not(:disabled) { background: var(--code-bg); }
+.pick-day .icon-btn:disabled { opacity: 0.35; }
+.pick-prev svg { transform: rotate(180deg); }
+.pick-date {
+  font: inherit; font-size: 13px; padding: 4px 8px; border-radius: 6px; border: 1px solid var(--border);
+  background: var(--panel); color: var(--text); color-scheme: light dark;
+}
+.pick-day-label { margin-left: 6px; font-weight: 600; font-size: 13px; text-transform: capitalize; }
+.pick-only { display: inline-flex; align-items: center; gap: 6px; margin-left: auto; font-size: 12.5px; color: var(--muted); cursor: pointer; }
+.pick-only input { accent-color: var(--svc-slack); }
+.pick-refresh { width: 28px; height: 28px; border-radius: 6px; }
+.pick-refresh:hover { background: var(--code-bg); }
+
+.pick-body { flex: 1; padding: 6px 14px 14px; }
+/* Mientras lee: el indicador de Slack y filas fantasma que brillan. */
+.pick-loading-head { display: flex; gap: 12px; align-items: flex-start; padding: 14px 4px 10px; }
+.pick-loading-head .run-orb { width: 12px; height: 12px; margin-top: 4px; }
+.pick-loading-head strong { font-size: 14px; }
+.pick-loading-head p { margin: 2px 0 0; color: var(--muted); font-size: 12.5px; }
+.pick-ghosts { list-style: none; margin: 4px 0 0; padding: 0; display: grid; gap: 8px; }
+.pick-ghosts li {
+  height: 58px; border-radius: 8px; border: 1px solid var(--border);
+  background: linear-gradient(90deg, var(--panel) 0%, color-mix(in srgb, var(--svc-slack) 7%, var(--panel)) 50%, var(--panel) 100%);
+  background-size: 200% 100%; animation: pick-ghost 1.6s ease-in-out infinite;
+}
+.pick-ghosts li:nth-child(2) { animation-delay: 0.15s; }
+.pick-ghosts li:nth-child(3) { animation-delay: 0.3s; opacity: 0.7; }
+@keyframes pick-ghost { from { background-position: 100% 0; } to { background-position: -100% 0; } }
+.pick-reloading { display: flex; align-items: center; gap: 8px; margin: 8px 0 0; font-size: 12px; color: var(--muted); }
+.pick-empty, .pick-error { padding: 28px 8px; color: var(--muted); font-size: 13px; text-align: center; }
+.pick-error { text-align: left; display: grid; gap: 10px; justify-items: start; }
+
+/* La lista: hora, quién y qué pidió, y la acción a la derecha según el estado. */
+.pick-list { list-style: none; margin: 8px 0 0; padding: 0; display: grid; gap: 8px; }
+.pick-row {
+  display: grid; grid-template-columns: 52px minmax(0, 1fr) auto; gap: 12px; align-items: start;
+  padding: 10px 12px; border-radius: 8px; border: 1px solid var(--border); background: var(--panel);
+  border-left: 3px solid var(--border); transition: border-color 0.15s, background 0.15s;
+}
+.pick-row.is-request { border-left-color: color-mix(in srgb, var(--svc-slack) 55%, var(--border)); }
+.pick-row:hover { border-color: color-mix(in srgb, var(--svc-slack) 40%, var(--border)); }
+.pick-row.done { background: color-mix(in srgb, var(--ok) 4%, var(--panel)); }
+.pick-row.busy { background: linear-gradient(100deg, color-mix(in srgb, var(--svc-slack) 8%, var(--panel)), var(--panel) 60%); }
+.pick-time { font-family: var(--mono); font-size: 12px; color: var(--muted); padding-top: 2px; }
+.pick-who { display: flex; align-items: center; gap: 8px; flex-wrap: wrap; font-size: 13px; }
+.pick-tag, .pick-files {
+  font-size: 10.5px; font-weight: 600; letter-spacing: 0.03em; text-transform: uppercase; padding: 0 7px;
+  border-radius: 999px; border: 1px solid var(--border); color: var(--muted); line-height: 1.6;
+}
+.pick-row.is-request .pick-tag { color: var(--svc-slack); border-color: color-mix(in srgb, var(--svc-slack) 45%, transparent); }
+.pick-files { text-transform: none; letter-spacing: 0; font-weight: 500; }
+.pick-text {
+  margin: 4px 0 0; font-size: 13px; line-height: 1.45; color: var(--text); white-space: pre-wrap;
+  display: -webkit-box; -webkit-line-clamp: 3; -webkit-box-orient: vertical; overflow: hidden;
+}
+.pick-row.is-note .pick-text { color: var(--muted); }
+.pick-actions { display: flex; flex-direction: column; align-items: flex-end; gap: 6px; min-width: 112px; }
+.pick-go {
+  display: inline-flex; align-items: center; gap: 6px; padding: 5px 12px; border-radius: 6px; font-size: 12.5px; font-weight: 600;
+  color: var(--svc-slack); background: color-mix(in srgb, var(--svc-slack) 12%, var(--panel));
+  border: 1px solid color-mix(in srgb, var(--svc-slack) 40%, transparent); transition: background 0.15s, border-color 0.15s;
+}
+.pick-go:hover:not(:disabled) { background: color-mix(in srgb, var(--svc-slack) 20%, var(--panel)); border-color: var(--svc-slack); }
+.pick-go:disabled { opacity: 0.6; cursor: progress; }
+.pick-go svg { width: 13px; height: 13px; }
+.pick-state { display: inline-flex; align-items: center; gap: 8px; font-size: 12.5px; font-weight: 600; color: var(--svc-slack); }
+.pick-done { display: inline-flex; align-items: center; gap: 5px; font-size: 12px; font-weight: 600; color: var(--ok); }
+.pick-done svg { width: 14px; height: 14px; }
+.pick-again { font-size: 11.5px; color: var(--muted); }
+.pick-again:hover { color: var(--svc-slack); }
+
+.pick-foot { padding: 10px 14px; border-top: 1px solid var(--border); background: var(--panel); font-size: 12.5px; }
+.pick-foot.fail { color: var(--fail); }
+
+@media (max-width: 600px) {
+  .pick-row { grid-template-columns: minmax(0, 1fr); }
+  .pick-actions { flex-direction: row; align-items: center; justify-content: flex-start; flex-wrap: wrap; }
+  .pick-only { margin-left: 0; }
+}
+@media (prefers-reduced-motion: reduce) {
+  .pick-ghosts li { animation: none; }
 }

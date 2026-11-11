@@ -15,7 +15,7 @@ from mcp.server.mcpserver.exceptions import ToolError
 
 from . import config, export
 from .config import Config
-from .events import NoActiveSession, Recorder
+from .events import PROGRESS, NoActiveSession, Recorder
 from .store import Store
 from .viewer.app import ViewerServer, create_app
 
@@ -175,7 +175,7 @@ def build(recorder: Recorder, viewer_url: str | None, cfg: Config | None = None)
         session = require_session(session_id)
         limit = max(1, min(limit, 100))
         row_offset, max_rows = max(0, row_offset), max(1, min(max_rows, 200))
-        events = recorder.store.events(session_id, after=max(0, after), limit=limit + 1)
+        events = recorder.store.events(session_id, after=max(0, after), limit=limit + 1, skip_types=(PROGRESS,))
         more = len(events) > limit
         events = events[:limit]
         for event in events:
