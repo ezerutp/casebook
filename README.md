@@ -131,7 +131,7 @@ Detalle en [Login y diagnóstico](docs/login-y-doctor.md#extensión-de-chrome).
 | [Packs](docs/packs.md) | La configuración de un equipo: instalar, armar y compartir un pack |
 | [Login y diagnóstico](docs/login-y-doctor.md) | `login` por navegador, `doctor`, túneles y qué significa cada error |
 | [Uso del visor y las sesiones](docs/uso.md) | Visor, `query_id`, aprobaciones, búsqueda, retomar investigaciones y comandos |
-| [Conocimiento entre investigaciones](docs/conocimiento.md) | `knowledge.db`, estados, vista Conocimiento y respaldo |
+| [Conocimiento entre investigaciones](docs/conocimiento.md) | `knowledge.db`, estados, vista Conocimiento, compartirlo (archivo o rama del equipo) y respaldo |
 | [Seguridad](docs/seguridad.md) | Solo lectura, guardas de MySQL, costo de CloudWatch, redacción y credenciales |
 
 Un proveedor nuevo (otro backend de logs, otra base) se suma como plugin de Python, sin tocar este repo: ver

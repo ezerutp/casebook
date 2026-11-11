@@ -153,6 +153,9 @@ class Pack:
     version: str
     display_name: str
     path: Path
+    repo: str | None = None              # [pack] repo: de dónde volver a instalar el pack
+    knowledge_repo: str | None = None    # [pack.knowledge] repo (por defecto, el del pack)
+    knowledge_branch: str | None = None  # [pack.knowledge] branch; None: el pack no comparte conocimiento
 
 
 @dataclass
@@ -530,6 +533,11 @@ def load(path: Path | None = None, pack: Path | str | None = _ACTIVE) -> Config:
     if pack_path:
         cfg.pack = Pack(str(meta.get("name") or pack_path.parent.name), str(meta.get("version", "")),
                         str(meta.get("display_name") or meta.get("name") or pack_path.parent.name), pack_path)
+        shared = meta.get("knowledge")
+        cfg.pack.repo = str(meta["repo"]) if meta.get("repo") else None
+        if isinstance(shared, dict):
+            cfg.pack.knowledge_repo = str(shared["repo"]) if shared.get("repo") else None
+            cfg.pack.knowledge_branch = str(shared.get("branch") or "knowledge")
     cfg.loaded_mtime = _signature(path, pack_path)
     for setting in SETTINGS:
         found, value = _lookup(data, setting.key)

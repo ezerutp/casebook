@@ -34,6 +34,8 @@ const ICONS = {
   warn: svg('<path d="M12 3 2 21h20z"/><path d="M12 10v4M12 17.5v.5"/>'),
   external: svg('<path d="M14 4h6v6M20 4l-9 9"/><path d="M18 14v6H4V6h6"/>'),
   download: svg('<path d="M12 4v11M7 10.5l5 5 5-5M5 20h14"/>'),
+  upload: svg('<path d="M12 16V5M7 9.5l5-5 5 5M5 20h14"/>'),
+  team: svg('<circle cx="9" cy="8" r="3"/><path d="M3 19c0-3 2.7-5 6-5s6 2 6 5"/><path d="M16 5.5a3 3 0 0 1 0 5M18 14c1.8.6 3 2.4 3 5"/>'),
   settings: svg('<path d="M4 7h16M4 17h16"/><circle cx="15" cy="7" r="2.5" fill="var(--panel)"/><circle cx="9" cy="17" r="2.5" fill="var(--panel)"/>'),
   terminal: svg('<path d="m5 7 5 5-5 5M12 17h7"/>'),
   skills: svg('<path d="M13 2 4 14h8l-1 8 9-12h-8z"/>'),

@@ -11,7 +11,7 @@ con un OpenSearch local.
 casebook pack                       # el activo: fuentes y skills
 casebook pack list                  # los instalados (* = activo) y de dónde salieron
 casebook pack install <origen>      # una carpeta, un .zip o una URL git (git@…, ssh://…, https://….git)
-casebook pack update                # vuelve a instalar el activo desde donde salió
+casebook pack update                # vuelve a instalar el activo desde donde salió (o desde [pack] repo)
 casebook pack remove <nombre>
 casebook pack init <carpeta> --name acme   # uno de ejemplo, comentado
 casebook pack build <carpeta> -o acme.zip  # el zip para compartir (valida antes)
@@ -37,7 +37,14 @@ name = "acme"            # minúsculas, números, - o _
 version = "1.2.0"
 display_name = "Acme"
 requires = ">=0.5.0"     # opcional: versión mínima de la app (0.4.0 para varios entornos de MySQL o CloudWatch;
-                         # 0.5.0 para que el análisis de Slack lea las recetas y archivos de las skills)
+                         # 0.5.0 para que el análisis de Slack lea las recetas y archivos de las skills;
+                         # 0.7.0 para [pack] repo y [pack.knowledge])
+repo = "git@github.com:acme/casebook-pack.git"   # opcional: el repo del pack. `pack update` lo usa cuando el pack
+                         # se instaló desde un zip, que no sabe de dónde salió
+
+[pack.knowledge]         # opcional: la rama donde el equipo comparte conocimiento
+branch = "knowledge"     # por defecto "knowledge"
+# repo = "git@…"         # por defecto el [pack] repo (o la URL git desde la que se instaló el pack)
 
 [[requires.plugins]]     # opcional: proveedores que no vienen con la app (código)
 name = "acme-logs"
@@ -62,6 +69,12 @@ markers = ["src", "README.md"]     # lo que tiene que contener
 Cada archivo de `knowledge/` es una lista de entradas con `source` (`mysql`, `opensearch` o `cloudwatch`),
 `environment`, `entity`, `kind`, `title`, `content` y `topics`. Se importan como `pending` y nunca pisan una entrada
 que ya existe.
+
+Las semillas son para lo poco y curado que viaja con cada versión del pack. Lo que el equipo va descubriendo se
+comparte en la rama de `[pack.knowledge]`, que no viaja en el zip: `casebook knowledge push` la crea y la
+actualiza, y `pack install`, `pack update` y `casebook knowledge pull` la traen
+([Compartir conocimiento](conocimiento.md#compartir-conocimiento)). Se clona con el git y el SSH de cada persona,
+así que basta con que tenga acceso al repo.
 
 Para compartir con el equipo, un repo privado con `pack/` (el pack) y `plugins/` (si hace falta) al lado:
 `pack build` arma desde ahí un zip con esas dos carpetas, y `pack install` acepta tanto el zip como el repo.

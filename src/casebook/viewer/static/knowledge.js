@@ -295,15 +295,142 @@ const knowledgeView = (() => {
     if (editing) { message.textContent = "Guarda o cancela la corrección antes de actualizar."; return; }
     void show();
   };
+  const noticeBox = document.querySelector("#knowledge-notice");
+  const sourceLabel = r => `${sourceNames[r.source] || r.source} · ${r.environment}`;
+  // Snackbar del resultado: queda abajo hasta cerrarlo; el detalle completo se abre en el modal.
+  function notice(title, text, tone = "info", result = null) {
+    const close = el("button", "", "icon-btn");
+    close.type = "button"; close.setAttribute("aria-label", "Cerrar aviso"); close.dataset.icon = "close";
+    close.onclick = () => { noticeBox.hidden = true; };
+    const body = el("div", "", "text");
+    body.append(el("strong", title), el("p", text));
+    const parts = [body];
+    if (result && result.items && result.items.length) {
+      const detail = el("button", "Ver detalle", "ghost detail");
+      detail.type = "button";
+      detail.onclick = () => openImportModal(title, result, {done: true});
+      parts.push(detail);
+    }
+    noticeBox.className = `knowledge-notice ${tone}`;
+    noticeBox.replaceChildren(...parts, close);
+    fillIcons(noticeBox);
+    noticeBox.hidden = false;
+    noticeBox.style.animation = "none"; void noticeBox.offsetWidth; noticeBox.style.animation = "";
+    noticeBox.focus({preventScroll: true});
+  }
+  function counts(r) {
+    const parts = [`${r.new} nuevas`];
+    if (r.updated) parts.push(`${r.updated} actualizadas`);
+    parts.push(`${r.existing} ya las tenías`);
+    if (r.kept) parts.push(`${r.kept} más viejas que las tuyas`);
+    if (r.invalid) parts.push(`${r.invalid} inválidas`);
+    return parts.join(" · ") + ".";
+  }
+  function resultNotice(what, r) {
+    const changed = r.new + r.updated;
+    const tone = r.invalid ? "warn" : changed ? "ok" : "info";
+    const title = changed ? `${what}: ${changed} ${changed === 1 ? "entrada importada" : "entradas importadas"}` : `${what}: no había nada nuevo`;
+    notice(title, counts(r), tone, r);
+  }
+  // Un solo modal para la vista previa (confirmar) y para el detalle de lo importado (con enlaces).
+  // Resuelve true si la persona confirma.
+  const modal = document.querySelector("#knowledge-import-modal");
+  function openImportModal(title, data, {done = false} = {}) {
+    const changed = data.new + data.updated;
+    modal.querySelector("#knowledge-import-title").textContent = title;
+    modal.querySelector(".modal-desc").textContent = done
+      ? "Esto es lo que entró. Abre una entrada para revisarla."
+      : changed ? "Revisa qué va a entrar antes de importar. Las entradas que ya tienes no se tocan."
+        : "No hay nada nuevo para importar: ya tienes todo lo de este origen.";
+    const chips = [["new", "nuevas", "ok"], ["updated", "actualizadas", "warn"], ["existing", "ya las tenías", "none"],
+      ["kept", "más viejas que las tuyas", "none"], ["invalid", "inválidas", "fail"]]
+      .filter(([key]) => data[key] || key === "new" || key === "existing")
+      .map(([key, label, tone]) => el("span", `${data[key]} ${label}`, `state-tag ${tone}`));
+    modal.querySelector(".knowledge-import-counts").replaceChildren(...chips);
+    const rows = (data.items || []).map(item => {
+      const li = el("li", "");
+      let name = el("span", item.title, "title");
+      if (done && item.id) {
+        const a = el("a", item.title, "title");
+        a.href = `#/knowledge/${item.id}`;
+        a.onclick = () => modal.close();
+        name = a;
+      }
+      li.append(el("span", item.change === "updated" ? "Actualiza" : "Nueva", `state-tag ${item.change === "updated" ? "warn" : "ok"}`),
+        name, el("small", sourceLabel(item)));
+      return li;
+    });
+    if (changed > rows.length) rows.push(el("li", `y ${changed - rows.length} más`));
+    modal.querySelector(".knowledge-import-items").replaceChildren(...rows);
+    const notes = [];
+    if (data.updated) notes.push(done ? "Las versiones anteriores de las actualizadas quedan en su historial."
+      : "Las actualizadas reemplazan tu versión por una más reciente; la tuya queda en el historial.");
+    if (data.invalid) notes.push("Las inválidas se omitieron.");
+    modal.querySelector(".knowledge-import-note").textContent = notes.join(" ");
+    const confirm = modal.querySelector(".modal-confirm");
+    const cancel = modal.querySelector(".modal-cancel");
+    confirm.hidden = done || !changed;
+    confirm.textContent = `Importar ${changed}`;
+    cancel.textContent = confirm.hidden ? "Cerrar" : "Cancelar";
+    return new Promise(resolve => {
+      let answer = false;
+      const finish = value => { answer = value; if (modal.open) modal.close(); };
+      confirm.onclick = () => finish(true);
+      cancel.onclick = modal.querySelector(".modal-close").onclick = () => finish(false);
+      modal.onclick = e => { if (e.target === modal) finish(false); };
+      modal.addEventListener("close", () => resolve(answer), {once: true});
+      modal.showModal();
+      (confirm.hidden ? cancel : confirm).focus();
+    });
+  }
+  async function importWithPreview(button, what, busy, run) {
+    if (editing) { notice("Hay una corrección sin guardar", "Guárdala o cancélala antes de importar.", "warn"); return; }
+    button.disabled = true;
+    message.textContent = busy;
+    try {
+      const preview = await run(true);
+      message.textContent = "";
+      if (!await openImportModal(what, preview)) return;
+      message.textContent = busy;
+      const result = await run(false);
+      message.textContent = "";
+      await load();
+      resultNotice(what, result);
+    } catch (error) {
+      message.textContent = "";
+      notice(`${what}: no se pudo`, error.message, "fail");
+    } finally { button.disabled = false; }
+  }
   document.querySelector("#knowledge-import").onclick = async e => {
     const button = e.currentTarget; button.disabled = true;
     message.textContent = "Importando metadatos locales; no se consultan servicios…";
     try {
       const result = await request("/api/knowledge/import", {method: "POST", headers: {"x-casebook-viewer": "1"}});
+      message.textContent = "";
       await load();
-      message.textContent = `${result.changed} actualizaciones de conocimiento. ${result.warnings} observaciones no pudieron importarse. Repetir la importación no duplica entradas.`;
-    } catch(error) { fail(error); } finally { button.disabled = false; }
+      notice(result.changed ? `Desde sesiones: ${result.changed} actualizaciones` : "Desde sesiones: no había nada nuevo",
+        "Repetir la importación no duplica entradas." + (result.warnings ? ` ${result.warnings} observaciones no pudieron importarse.` : ""),
+        result.warnings ? "warn" : result.changed ? "ok" : "info");
+    } catch(error) { message.textContent = ""; notice("Desde sesiones: no se pudo", error.message, "fail"); }
+    finally { button.disabled = false; }
   };
+  document.querySelector("#knowledge-export").onclick = () => { location.href = "/api/knowledge/export"; };
+  const fileInput = document.querySelector("#knowledge-file");
+  const importFile = document.querySelector("#knowledge-import-file");
+  importFile.onclick = () => fileInput.click();
+  fileInput.onchange = async () => {
+    const file = fileInput.files[0];
+    fileInput.value = "";
+    if (!file) return;
+    const body = await file.text();
+    await importWithPreview(importFile, `Importar ${file.name}`, `Leyendo ${file.name}…`, dryRun =>
+      request(`/api/knowledge/import-file?name=${encodeURIComponent(file.name)}&dry_run=${dryRun}`,
+        {method: "POST", headers: {"content-type": "application/json", "x-casebook-viewer": "1"}, body}));
+  };
+  const pull = document.querySelector("#knowledge-pull");
+  request("/api/knowledge/share").then(info => { pull.hidden = !info.configured; }).catch(() => {});
+  pull.onclick = () => importWithPreview(pull, "Traer del equipo", "Consultando la rama del equipo…", dryRun =>
+    request(`/api/knowledge/pull?dry_run=${dryRun}`, {method: "POST", headers: {"x-casebook-viewer": "1"}}));
   window.addEventListener("beforeunload", e => { if (editing) { e.preventDefault(); e.returnValue = ""; } });
   return {show};
 })();

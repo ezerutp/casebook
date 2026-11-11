@@ -43,6 +43,45 @@ La evidencia incluye un resumen independiente: borrar una sesión puede romper s
 conocimiento. Para respaldar una base activa usa la API de backup de SQLite; para copiar el archivo directamente,
 cierra primero todos los procesos MCP y visores para no omitir cambios pendientes en el WAL.
 
+## Compartir conocimiento
+
+Cada entrada tiene una **firma**: un hash corto de su fuente, entorno, entidad, tipo, título, contenido y temas.
+El estado, las fechas y la evidencia quedan fuera, así la misma entrada firma igual en cualquier máquina. Se
+calcula al guardar; las entradas anteriores a las firmas se firman al exportar.
+
+```bash
+casebook knowledge export                 # todas las entradas a casebook-conocimiento-AAAA-MM-DD.json
+casebook knowledge import archivo.json    # solo entran las que no tienes
+```
+
+En el visor son los botones **Exportar** e **Importar archivo** de Conocimiento. Siempre se exporta todo; al
+importar:
+
+- Una firma que ya tienes, o que ya importaste alguna vez, se omite. Por eso reimportar un archivo con 33
+  entradas cuando ya tenías 30 agrega 3, y una entrada importada que eliminaste no vuelve.
+- Si la misma entidad existe con otro contenido gana la más reciente, como una revisión nueva: la anterior queda
+  en el historial. Lo local más reciente no se pisa.
+- La entrada conserva su estado (`verified`, `pending` o `stale`) y su evidencia dice de qué archivo vino. Los
+  enlaces a sesiones y consultas no viajan: son del historial de quien exportó.
+- La firma se recalcula con el contenido: no se confía en la que trae el archivo. El contenido pasa por la misma
+  validación y redacción que cualquier entrada. Importa archivos de gente de tu equipo: una entrada `verified`
+  ajena la reutiliza el agente como si la hubieras observado tú.
+
+### La rama del equipo
+
+Un pack puede declarar una rama git donde el equipo comparte su conocimiento ([Packs](packs.md)):
+
+```bash
+casebook knowledge pull    # trae la rama e importa lo que falta
+casebook knowledge push    # une lo tuyo con la rama y lo sube (pide confirmación)
+```
+
+`pull` también corre al final de `pack install` y `pack update`, y es el botón **Traer del equipo** del visor;
+si falla (red, acceso), el pack queda instalado y se avisa. `push` sube **todo** tu conocimiento local a
+`knowledge.json` de la rama: lo ve cualquiera con acceso al repo. Si otra persona subió antes, vuelve a unir y
+reintenta; nadie resuelve conflictos de git a mano. La primera vez crea la rama, sin historia en común con el pack.
+`--repo` y `--branch` usan otro destino que el del pack.
+
 ## Distribución
 
 Las skills de un pack pueden incluir este flujo. Para distribuir sus cambios a las instalaciones existentes,

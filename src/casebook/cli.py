@@ -318,7 +318,9 @@ def cmd_pack(args: argparse.Namespace) -> int:
                     print("No hay pack activo para actualizar.", file=sys.stderr)
                     return 1
                 source = packs.origin(current.name)
-                if not source or (source.endswith(".zip") and not Path(source).exists()):
+                if not source or (not packs._is_git(source) and not Path(source).exists()):
+                    source = current.repo  # instalado desde un zip o una carpeta que ya no está: el repo del pack
+                if not source:
                     print(f"No sé de dónde volver a instalar {current.name}: pásame la carpeta, el zip nuevo o la URL "
                           "con `pack install`.", file=sys.stderr)
                     return 1
@@ -611,6 +613,72 @@ def cmd_export(args: argparse.Namespace) -> int:
     return 0
 
 
+def cmd_knowledge(args: argparse.Namespace) -> int:
+    import json
+    import sqlite3
+    from datetime import date
+    from pathlib import Path
+
+    from . import knowledge_share
+    from .knowledge import KnowledgeError
+    from .store import Store
+
+    def counts(r: dict) -> str:
+        return (f"{r['new']} nuevas, {r['updated']} actualizadas, {r['existing']} ya las tenías"
+                + (f", {r['kept']} más viejas que las tuyas" if r["kept"] else "")
+                + (f", {r['invalid']} inválidas" if r["invalid"] else ""))
+
+    store = Store(config.load().db_path)
+    db = store.knowledge.db
+    try:
+        if args.action == "export":
+            data = db.export()
+            text = json.dumps(data, ensure_ascii=False, indent=1) + "\n"
+            if args.target == "-" or args.output == "-":
+                sys.stdout.write(text)
+                return 0
+            path = Path(args.output or args.target or f"casebook-conocimiento-{date.today()}.json").expanduser()
+            path.write_text(text)
+            print(f"{len(data['entries'])} entradas exportadas a {path}")
+            return 0
+        if args.action == "import":
+            if not args.target:
+                print("error: falta el archivo a importar", file=sys.stderr)
+                return 1
+            path = Path(args.target).expanduser()
+            try:
+                data = json.loads(path.read_text())
+            except (OSError, ValueError) as exc:
+                print(f"error: no pude leer {path}: {exc}", file=sys.stderr)
+                return 1
+            print(f"Importado: {counts(db.import_entries(data, origin=path.name))}.")
+            return 0
+        target = knowledge_share.remote()
+        if args.repo or args.branch:
+            target = knowledge_share.check(knowledge_share.Remote(
+                args.repo or (target.repo if target else ""),
+                args.branch or (target.branch if target else knowledge_share.DEFAULT_BRANCH)))
+        if target is None:
+            print("El pack activo no declara dónde se comparte el conocimiento: agrega [pack.knowledge] a su "
+                  "pack.toml o pasa --repo.", file=sys.stderr)
+            return 1
+        if args.action == "pull":
+            result = knowledge_share.pull(db, target, interactive=sys.stdin.isatty())
+            print(f"Traído de {target}: {counts(result)}.")
+            return 0
+        result = knowledge_share.push(
+            db, target, lambda summary: print(summary) or args.yes or _ask_yes("¿Subirlo?"),
+            interactive=sys.stdin.isatty())
+        print(f"Subido a {target}: {result['new']} nuevas, {result['updated']} actualizadas." if result["pushed"]
+              else f"Nada que subir: {target} ya tiene todo lo tuyo.")
+        return 0
+    except (KnowledgeError, sqlite3.Error, OSError) as exc:
+        print(f"error: {exc}", file=sys.stderr)
+        return 1
+    finally:
+        store.close()
+
+
 def cmd_demo(args: argparse.Namespace) -> int:
     """Escribe una sesión de ejemplo, de a poco, para probar el visor en vivo sin backends."""
     from .events import Recorder
@@ -746,6 +814,18 @@ def main(argv: list[str] | None = None) -> int:
     p.add_argument("-o", "--output", help="archivo de salida, o - para stdout (por defecto ~/.local/share/casebook/exports/)")
     p.add_argument("--rows", type=int, default=20, help="filas por tabla (por defecto 20)")
     p.set_defaults(func=cmd_export)
+
+    p = sub.add_parser("knowledge", help="conocimiento: exportarlo, importarlo o compartirlo en la rama del equipo",
+                       description="export [archivo]: todas las entradas, firmadas · import <archivo>: solo las que "
+                                   "no tienes · pull: trae la rama del equipo ([pack.knowledge] del pack) · "
+                                   "push: sube lo tuyo a esa rama")
+    p.add_argument("action", choices=["export", "import", "pull", "push"])
+    p.add_argument("target", nargs="?", help="export/import: el archivo (export: - para stdout)")
+    p.add_argument("-o", "--output", help="export: el archivo de salida")
+    p.add_argument("--repo", help="pull/push: otro repo en vez del que declara el pack")
+    p.add_argument("--branch", help="pull/push: otra rama en vez de la que declara el pack")
+    p.add_argument("-y", "--yes", action="store_true", help="push: sin preguntar")
+    p.set_defaults(func=cmd_knowledge)
 
     p = sub.add_parser("demo", help="escribe una sesión de ejemplo para probar el visor")
     p.add_argument("--fast", action="store_true")
