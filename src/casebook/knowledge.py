@@ -253,14 +253,14 @@ class KnowledgeStore:
         confía en la del archivo. Una firma ya vista se omite, aunque la entrada se haya editado o eliminado aquí.
         Si la entidad ya existe con otro contenido gana la más reciente; una entrada sin fecha nunca pisa la local.
         `status` fuerza el estado de lo importado (las semillas entran como pending). `dry_run` solo cuenta.
-        `items` lista (hasta 50) las entradas nuevas o actualizadas, para revisarlas o enlazarlas."""
+        `items` lista (hasta 200) las entradas nuevas o actualizadas, para revisarlas o enlazarlas."""
         items, exported_at = parse_export(data)
         result = {"new": 0, "existing": 0, "updated": 0, "kept": 0, "invalid": 0}
         changed: list[dict] = []
         planned: set[str] = set()
 
         def note(change, entry_id, clean):
-            if len(changed) < 50:
+            if len(changed) < 200:
                 changed.append({"id": entry_id, "change": change, "title": clean["title"], "entity": clean["entity"],
                                 "source": clean["source"], "environment": clean["environment"], "kind": clean["kind"]})
         for item in items:

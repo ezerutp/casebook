@@ -297,31 +297,25 @@ const knowledgeView = (() => {
   };
   const noticeBox = document.querySelector("#knowledge-notice");
   const sourceLabel = r => `${sourceNames[r.source] || r.source} · ${r.environment}`;
-  // El resultado de importar queda fijo arriba hasta cerrarlo, con enlaces a lo que cambió.
-  function notice(title, text, tone = "info", items = []) {
+  // Snackbar del resultado: queda abajo hasta cerrarlo; el detalle completo se abre en el modal.
+  function notice(title, text, tone = "info", result = null) {
     const close = el("button", "", "icon-btn");
     close.type = "button"; close.setAttribute("aria-label", "Cerrar aviso"); close.dataset.icon = "close";
     close.onclick = () => { noticeBox.hidden = true; };
-    const body = [el("strong", title), el("p", text)];
-    const linked = items.filter(i => i.id);
-    if (linked.length) {
-      const list = el("ul", "");
-      for (const item of linked.slice(0, 8)) {
-        const li = el("li", "");
-        const a = el("a", item.title);
-        a.href = `#/knowledge/${item.id}`;
-        li.append(a, ` · ${item.change === "updated" ? "actualizada" : "nueva"}`);
-        list.append(li);
-      }
-      if (linked.length > 8) list.append(el("li", `y ${linked.length - 8} más`));
-      body.push(list);
+    const body = el("div", "", "text");
+    body.append(el("strong", title), el("p", text));
+    const parts = [body];
+    if (result && result.items && result.items.length) {
+      const detail = el("button", "Ver detalle", "ghost detail");
+      detail.type = "button";
+      detail.onclick = () => openImportModal(title, result, {done: true});
+      parts.push(detail);
     }
     noticeBox.className = `knowledge-notice ${tone}`;
-    noticeBox.replaceChildren(...body, close);
+    noticeBox.replaceChildren(...parts, close);
     fillIcons(noticeBox);
     noticeBox.hidden = false;
     noticeBox.style.animation = "none"; void noticeBox.offsetWidth; noticeBox.style.animation = "";
-    noticeBox.scrollIntoView({block: "nearest", behavior: "smooth"});
     noticeBox.focus({preventScroll: true});
   }
   function counts(r) {
@@ -336,38 +330,48 @@ const knowledgeView = (() => {
     const changed = r.new + r.updated;
     const tone = r.invalid ? "warn" : changed ? "ok" : "info";
     const title = changed ? `${what}: ${changed} ${changed === 1 ? "entrada importada" : "entradas importadas"}` : `${what}: no había nada nuevo`;
-    notice(title, counts(r), tone, r.items || []);
+    notice(title, counts(r), tone, r);
   }
-  // Vista previa antes de importar: resuelve true si la persona confirma.
+  // Un solo modal para la vista previa (confirmar) y para el detalle de lo importado (con enlaces).
+  // Resuelve true si la persona confirma.
   const modal = document.querySelector("#knowledge-import-modal");
-  function confirmImport(what, preview) {
-    const changed = preview.new + preview.updated;
-    modal.querySelector("#knowledge-import-title").textContent = what;
-    modal.querySelector(".modal-desc").textContent = changed
-      ? "Revisa qué va a entrar antes de importar. Las entradas que ya tienes no se tocan."
-      : "No hay nada nuevo para importar: ya tienes todo lo de este origen.";
+  function openImportModal(title, data, {done = false} = {}) {
+    const changed = data.new + data.updated;
+    modal.querySelector("#knowledge-import-title").textContent = title;
+    modal.querySelector(".modal-desc").textContent = done
+      ? "Esto es lo que entró. Abre una entrada para revisarla."
+      : changed ? "Revisa qué va a entrar antes de importar. Las entradas que ya tienes no se tocan."
+        : "No hay nada nuevo para importar: ya tienes todo lo de este origen.";
     const chips = [["new", "nuevas", "ok"], ["updated", "actualizadas", "warn"], ["existing", "ya las tenías", "none"],
       ["kept", "más viejas que las tuyas", "none"], ["invalid", "inválidas", "fail"]]
-      .filter(([key]) => preview[key] || key === "new" || key === "existing")
-      .map(([key, label, tone]) => el("span", `${preview[key]} ${label}`, `state-tag ${tone}`));
+      .filter(([key]) => data[key] || key === "new" || key === "existing")
+      .map(([key, label, tone]) => el("span", `${data[key]} ${label}`, `state-tag ${tone}`));
     modal.querySelector(".knowledge-import-counts").replaceChildren(...chips);
-    const rows = (preview.items || []).map(item => {
+    const rows = (data.items || []).map(item => {
       const li = el("li", "");
+      let name = el("span", item.title, "title");
+      if (done && item.id) {
+        const a = el("a", item.title, "title");
+        a.href = `#/knowledge/${item.id}`;
+        a.onclick = () => modal.close();
+        name = a;
+      }
       li.append(el("span", item.change === "updated" ? "Actualiza" : "Nueva", `state-tag ${item.change === "updated" ? "warn" : "ok"}`),
-        el("span", item.title, "title"), el("small", sourceLabel(item)));
+        name, el("small", sourceLabel(item)));
       return li;
     });
     if (changed > rows.length) rows.push(el("li", `y ${changed - rows.length} más`));
     modal.querySelector(".knowledge-import-items").replaceChildren(...rows);
     const notes = [];
-    if (preview.updated) notes.push("Las actualizadas reemplazan tu versión por una más reciente; la tuya queda en el historial.");
-    if (preview.invalid) notes.push("Las inválidas se omiten.");
+    if (data.updated) notes.push(done ? "Las versiones anteriores de las actualizadas quedan en su historial."
+      : "Las actualizadas reemplazan tu versión por una más reciente; la tuya queda en el historial.");
+    if (data.invalid) notes.push("Las inválidas se omitieron.");
     modal.querySelector(".knowledge-import-note").textContent = notes.join(" ");
     const confirm = modal.querySelector(".modal-confirm");
     const cancel = modal.querySelector(".modal-cancel");
-    confirm.hidden = !changed;
+    confirm.hidden = done || !changed;
     confirm.textContent = `Importar ${changed}`;
-    cancel.textContent = changed ? "Cancelar" : "Cerrar";
+    cancel.textContent = confirm.hidden ? "Cerrar" : "Cancelar";
     return new Promise(resolve => {
       let answer = false;
       const finish = value => { answer = value; if (modal.open) modal.close(); };
@@ -376,7 +380,7 @@ const knowledgeView = (() => {
       modal.onclick = e => { if (e.target === modal) finish(false); };
       modal.addEventListener("close", () => resolve(answer), {once: true});
       modal.showModal();
-      (changed ? confirm : cancel).focus();
+      (confirm.hidden ? cancel : confirm).focus();
     });
   }
   async function importWithPreview(button, what, busy, run) {
@@ -386,7 +390,7 @@ const knowledgeView = (() => {
     try {
       const preview = await run(true);
       message.textContent = "";
-      if (!await confirmImport(what, preview)) return;
+      if (!await openImportModal(what, preview)) return;
       message.textContent = busy;
       const result = await run(false);
       message.textContent = "";

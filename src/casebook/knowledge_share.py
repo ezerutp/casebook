@@ -110,7 +110,7 @@ def pull(db: KnowledgeStore, target: Remote, interactive: bool = False, dry_run:
             total["files"] += 1
             for key, value in result.items():
                 total[key] += value
-    total["items"] = total["items"][:50]
+    total["items"] = total["items"][:200]
     return total
 
 
