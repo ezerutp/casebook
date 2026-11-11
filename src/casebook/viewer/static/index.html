@@ -168,6 +168,13 @@
           <button id="knowledge-reload"><span class="btn-icon" data-icon="refresh" aria-hidden="true"></span><span>Actualizar</span></button>
         </div>
         <p class="skills-intro">Lo aprendido entre investigaciones, con su evidencia y fecha de verificación.</p>
+        <div class="knowledge-toolbar" role="toolbar" aria-label="Importar y compartir conocimiento">
+          <button id="knowledge-import-file" data-tip="Importa un archivo exportado por otra persona. Las entradas que ya tienes se omiten."><span class="btn-icon" data-icon="upload" aria-hidden="true"></span><span>Importar</span></button>
+          <button id="knowledge-export" data-tip="Descarga todas las entradas, firmadas, para compartirlas."><span class="btn-icon" data-icon="download" aria-hidden="true"></span><span>Exportar</span></button>
+          <button id="knowledge-pull" hidden data-tip="Trae la rama de conocimiento del repo del pack. Solo entran las entradas que no tienes."><span class="btn-icon" data-icon="team" aria-hidden="true"></span><span>Traer del equipo</span></button>
+          <button id="knowledge-import" data-tip="Importa los esquemas que ya quedaron en tus sesiones; no consulta servicios. Repetirlo no duplica entradas."><span class="btn-icon" data-icon="sessions" aria-hidden="true"></span><span>Desde sesiones</span></button>
+          <input id="knowledge-file" type="file" accept=".json,application/json" hidden>
+        </div>
         <form id="knowledge-filters" class="knowledge-filters">
           <input name="q" type="search" class="search" placeholder="Buscar tabla, campo o concepto" aria-label="Buscar en el conocimiento">
           <div class="knowledge-filter-row">
@@ -190,13 +197,6 @@
           </div>
           <nav id="knowledge-list" class="knowledge-list" aria-label="Entradas de conocimiento"></nav>
         </section>
-        <div class="knowledge-actions">
-          <button id="knowledge-import" class="ghost" data-tip="Lee los esquemas que ya quedaron en tus sesiones; no consulta servicios. Repetirlo no duplica entradas."><span class="btn-icon" data-icon="download" aria-hidden="true"></span><span>Importar esquemas de sesiones</span></button>
-          <button id="knowledge-pull" class="ghost" hidden data-tip="Trae la rama de conocimiento del repo del pack. Solo entran las entradas que no tienes."><span class="btn-icon" data-icon="download" aria-hidden="true"></span><span>Traer del equipo</span></button>
-          <button id="knowledge-export" class="ghost" data-tip="Descarga todas las entradas, firmadas, para compartirlas."><span>Exportar</span></button>
-          <button id="knowledge-import-file" class="ghost" data-tip="Importa un archivo exportado por otra persona. Las entradas que ya tienes se omiten."><span>Importar archivo</span></button>
-          <input id="knowledge-file" type="file" accept=".json,application/json" hidden>
-        </div>
       </div>
       <article id="knowledge-detail" class="skill-detail panel" aria-label="Detalle del conocimiento"><p class="empty">Selecciona una entrada para ver su contenido y evidencia.</p></article>
     </section>
