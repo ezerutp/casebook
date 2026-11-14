@@ -277,6 +277,43 @@
 
   <div id="manual-notice" class="knowledge-notice manual-notice" role="status" aria-live="polite" hidden></div>
 
+  <dialog id="manual-editor" class="card-modal manual-editor" aria-labelledby="manual-editor-title">
+    <div class="modal-bar">
+      <h2 id="manual-editor-title">Nueva consulta</h2>
+      <span class="me-parent" hidden></span>
+      <button class="icon-btn modal-close" aria-label="Cerrar" data-icon="close"></button>
+    </div>
+    <div class="modal-body me-body">
+      <div class="me-form">
+        <section class="me-step"><span class="me-num">1</span><div class="me-field"><span class="me-label">Fuente</span><div class="me-seg me-sources" role="group" aria-label="Fuente"></div></div></section>
+        <section class="me-step"><span class="me-num">2</span><div class="me-field"><span class="me-label">Entorno</span><div class="me-seg me-envs" role="group" aria-label="Entorno"></div>
+          <p class="me-hint me-env-hint"></p><p class="me-prod-warn" hidden>Producción: datos reales de clientes. Filtra lo más posible.</p></div></section>
+        <section class="me-step me-tools-step"><span class="me-num">3</span><div class="me-field"><span class="me-label">Tipo</span><div class="me-seg me-tools" role="group" aria-label="Tipo de consulta"></div></div></section>
+        <section class="me-step"><span class="me-num me-num-entity">4</span><div class="me-field"><label class="me-label me-entity-label" for="me-entity">Índice</label>
+          <input id="me-entity" class="me-entity" list="me-entities" autocomplete="off" spellcheck="false"><datalist id="me-entities"></datalist>
+          <p class="me-hint me-entity-hint"></p></div></section>
+        <section class="me-step"><span class="me-num me-num-query">5</span><div class="me-field"><label class="me-label me-query-label" for="me-query">Consulta</label>
+          <textarea id="me-query" class="me-query" spellcheck="false" rows="11"></textarea>
+          <div class="me-extra me-db-extra" hidden><label>Límite de filas <input class="me-limit" type="number" min="1" inputmode="numeric"></label></div>
+          <div class="me-extra me-cw-extra" hidden><label>Desde <input class="me-start" spellcheck="false" placeholder="-1h"></label><label>Hasta <input class="me-end" spellcheck="false" placeholder="now"></label><span class="me-hint">ISO 8601 (UTC) o relativo: -15m, -2h, -3d, now</span></div>
+        </div></section>
+        <section class="me-step"><span class="me-num me-num-purpose">6</span><div class="me-field"><label class="me-label" for="me-purpose">Para qué</label>
+          <input id="me-purpose" class="me-purpose" maxlength="300" placeholder="Ej.: Ver si el lead sigue sin source después del fix">
+          <p class="me-hint">Es el título de la tarjeta y lo primero que lee el agente.</p></div></section>
+        <div class="me-check" aria-live="polite"></div>
+      </div>
+      <aside class="me-guide" hidden aria-label="Guía"></aside>
+    </div>
+    <div class="me-footer">
+      <label class="me-confirm" hidden><input type="checkbox"> <span></span></label>
+      <button type="button" class="ghost me-count" hidden>Previsualizar cantidad</button>
+      <span class="me-count-result" aria-live="polite"></span>
+      <span class="grow"></span>
+      <button type="button" class="ghost me-cancel">Cancelar</button>
+      <button type="button" class="primary me-run" disabled><span class="btn-icon" data-icon="chevron" aria-hidden="true"></span><span>Ejecutar</span></button>
+    </div>
+  </dialog>
+
   <template id="tpl-table">
     <section class="table-block">
       <div class="result-bar">
@@ -409,6 +446,7 @@
   <script src="/static/tooltip.js"></script>
   <script src="/static/rich-copy.js"></script>
   <script src="/static/app.js"></script>
+  <script src="/static/manual.js"></script>
   <script src="/static/settings.js"></script>
   <script src="/static/skills.js"></script>
   <script src="/static/knowledge.js"></script>

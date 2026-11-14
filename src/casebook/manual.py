@@ -282,3 +282,119 @@ def activity(store: Store, session_id: int, after: int) -> tuple[dict[str, Any] 
     if unpinned:
         report["unpinned"] = unpinned
     return report, cursor
+
+
+# --- el editor del visor: opciones y validación en seco -----------------------------------------------------------
+
+SOURCE_KINDS = {"opensearch": "os", "mysql": "db", "cloudwatch": "cw"}
+SOURCE_LABELS = {"opensearch": "OpenSearch", "mysql": "MySQL", "cloudwatch": "CloudWatch"}
+
+
+def options(cfg: Config) -> dict[str, Any]:
+    """Lo que necesita el editor: las fuentes configuradas, sus entornos y los límites de cada una."""
+    from . import config
+
+    sources = []
+    for kind, svc in SOURCE_KINDS.items():
+        names = config.env_names(cfg, kind)
+        if not names:
+            continue
+        envs = []
+        for name, key in names.items():
+            src = getattr(cfg, kind)[key]
+            envs.append({"name": name, "description": getattr(src, "description", "") or "",
+                         "hint": getattr(src, "hint", "") or ""})
+        sources.append({"kind": kind, "svc": svc, "label": SOURCE_LABELS[kind], "envs": envs})
+    return {
+        "sources": sources,
+        "limits": {
+            "db_default_limit": cfg.db.default_limit, "db_max_limit": cfg.db.max_limit,
+            "os_max_size": cfg.os_max_size, "cw_max_cost_usd": cfg.cw_max_cost_usd,
+            "cw_max_window_days": cfg.cw_max_window_days,
+        },
+    }
+
+
+def _env(cfg: Config, kind: str, env: str | None) -> str:
+    from . import config
+    from .tools.common import resolve_env
+
+    return resolve_env(SOURCE_LABELS[kind], config.env_names(cfg, kind), env)
+
+
+def _provider_client(cfg: Config, kind: str, key: str):
+    from . import guards, systems
+
+    system = getattr(systems, kind)(cfg, key)
+    provider = systems.provider(cfg, system)
+    if provider is None:
+        raise guards.GuardError(systems.missing_provider_message(system))
+    return provider.client()
+
+
+async def validate(cfg: Config, tool: str, args: dict[str, Any], count: bool = False) -> dict[str, Any]:
+    """Revisa una consulta sin correrla ni registrarla: los mismos guards de la tool, la consulta final y, en
+    CloudWatch, el costo estimado. Con `count` (OpenSearch) cuenta cuántos documentos matchean."""
+    from . import guards, timerange
+    from .backends.errors import BackendError
+    from .providers import ProviderError
+    from .tools.cloudwatch import ESTIMATE_MARGIN, check_log_group
+    from .tools.opensearch import search_body
+
+    try:
+        if tool not in MANUAL_TOOLS:
+            raise guards.GuardError(f"{tool} no se puede correr desde el visor")
+        if tool == "db_select":
+            _env(cfg, "mysql", args.get("env"))
+            limit = int(args.get("limit") or cfg.db.default_limit)
+            kind, sql = guards.check_sql(str(args.get("sql") or ""), limit, cfg.db.max_limit)
+            return {"ok": True, "final": sql, "kind": kind,
+                    "note": "Antes de correr se hace EXPLAIN: un full scan de una tabla grande pide aprobación."}
+        if tool in ("os_search", "os_count"):
+            key = _env(cfg, "opensearch", args.get("env"))
+            index = guards.check_index(str(args.get("index") or ""))
+            if tool == "os_search":
+                body = guards.check_search_body(search_body(
+                    args.get("query"), int(args.get("size", 10)), args.get("source"), args.get("sort"),
+                    args.get("aggs"), bool(args.get("track_total_hits", True))), cfg.os_max_size)
+                final = f"GET {index}/_search\n" + json.dumps(body, indent=2, ensure_ascii=False)
+            else:
+                body = {"query": args["query"]} if args.get("query") else None
+                final = f"GET {index}/_count" + ("\n" + json.dumps(body, indent=2, ensure_ascii=False) if body else "")
+            out: dict[str, Any] = {"ok": True, "final": final}
+            if count:
+                client = _provider_client(cfg, "opensearch", key)
+                data = await client.request("GET", f"{index}/_count", {"query": args["query"]} if args.get("query") else None)
+                out["count"] = data.get("count")
+            return out
+        if tool == "cw_query":
+            key = _env(cfg, "cloudwatch", args.get("env"))
+            check_log_group(str(args.get("log_group") or ""))
+            query = str(args.get("query") or "").strip()
+            if not query:
+                raise guards.GuardError("la consulta está vacía")
+            s, e = timerange.window(str(args.get("start") or ""), str(args.get("end") or "now"), cfg.cw_max_window_days)
+            client = _provider_client(cfg, "cloudwatch", key)
+            est = await client.estimate([args["log_group"]], timerange.iso(s), timerange.iso(e))
+            cap = float(args.get("max_cost_usd") or cfg.cw_max_cost_usd)
+            with_margin = est.cost_usd * ESTIMATE_MARGIN
+            return {
+                "ok": True, "final": query, "window": [timerange.iso(s), timerange.iso(e)],
+                "estimate": {"gb": round(est.bytes / 1e9, 3), "cost_usd": round(est.cost_usd, 5),
+                             "with_margin_usd": round(with_margin, 5), "within_limit": est.within_limit,
+                             "limit_usd": est.limit_usd},
+                "cap_usd": cap,
+                "needs_confirmation": with_margin > cap,
+                # Lo que se manda como max_cost_usd si el ingeniero acepta el costo: no vuelve a pedir aprobación.
+                "confirm_max_cost_usd": round(max(cap, with_margin * 1.1) + 0.0001, 4),
+                "blocked": None if est.within_limit else f"el proveedor no permite esta consulta: supera su límite de ${est.limit_usd}",
+            }
+        if tool == "os_mapping" or tool == "os_indices":
+            _env(cfg, "opensearch", args.get("env"))
+        elif tool in ("db_tables", "db_describe"):
+            _env(cfg, "mysql", args.get("env"))
+        elif tool == "cw_log_groups":
+            _env(cfg, "cloudwatch", args.get("env"))
+        return {"ok": True}
+    except (guards.GuardError, BackendError, ProviderError, ValueError, TypeError, KeyError) as exc:
+        return {"ok": False, "error": str(exc) or type(exc).__name__}

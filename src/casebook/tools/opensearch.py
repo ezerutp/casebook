@@ -24,6 +24,21 @@ def envs_doc(cfg: Config) -> str:
     return _envs_doc("el entorno", about)
 
 
+def search_body(query: dict | None = None, size: int = 10, source: list[str] | None = None, sort: list | None = None,
+                aggs: dict | None = None, track_total_hits: bool = True) -> dict[str, Any]:
+    """El body de os_search (antes de los guards). Lo usa también la validación del editor del visor."""
+    body: dict[str, Any] = {"size": size, "track_total_hits": track_total_hits}
+    if query:
+        body["query"] = query
+    if source is not None:
+        body["_source"] = source
+    if sort:
+        body["sort"] = sort
+    if aggs:
+        body["aggs"] = aggs
+    return body
+
+
 def register(mcp: MCPServer, recorder: Recorder, cfg: Config, viewer_url: str | None) -> None:
     tool = texts.tool(mcp, cfg, envs_doc(cfg))
 
@@ -130,16 +145,7 @@ def register(mcp: MCPServer, recorder: Recorder, cfg: Config, viewer_url: str | 
         Devuelve como mucho 25 filas por tabla; el resultado completo queda en el visor."""
         env = resolve_env(env)
         index = guards.check_index(index)
-        body: dict[str, Any] = {"size": size, "track_total_hits": track_total_hits}
-        if query:
-            body["query"] = query
-        if source is not None:
-            body["_source"] = source
-        if sort:
-            body["sort"] = sort
-        if aggs:
-            body["aggs"] = aggs
-        body = guards.check_search_body(body, cfg.os_max_size)
+        body = guards.check_search_body(search_body(query, size, source, sort, aggs, track_total_hits), cfg.os_max_size)
         params = {"index": index, "env": env, "size": size}
         path = f"{index}/_search"
         client, text = prepare(env, "GET", path, body)

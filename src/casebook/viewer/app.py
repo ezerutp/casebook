@@ -60,6 +60,12 @@ class Pin(BaseModel):
     pinned: bool
 
 
+class ValidateQuery(BaseModel):
+    tool: str
+    args: dict[str, Any] = {}
+    count: bool = False  # OpenSearch: contar cuántos documentos matchean (no queda en la sesión)
+
+
 class SlackWatchEnable(BaseModel):
     lookback_minutes: int = 0
 
@@ -597,6 +603,20 @@ def create_app(store: Store, cfg: Config | None = None, served_by: str = "viewer
             raise HTTPException(422, "la consulta de origen no es de esta sesión")
         return await launch(session_id, body.tool, body.args, body.purpose, run_mode=body.run_mode,
                             parent_query_id=body.parent_query_id, wait=body.wait)
+
+    @app.get("/api/manual/options")
+    def manual_options() -> dict:
+        from .. import manual
+
+        config.refresh(cfg)
+        return manual.options(cfg)
+
+    @app.post("/api/manual/validate", dependencies=[Depends(require_viewer)])
+    async def manual_validate(body: ValidateQuery) -> dict:
+        from .. import manual
+
+        config.refresh(cfg)
+        return await manual.validate(cfg, body.tool, body.args, body.count)
 
     @app.post("/api/queries/{query_id}/pin", dependencies=[Depends(require_viewer)])
     def pin_query(query_id: str, body: Pin) -> dict:

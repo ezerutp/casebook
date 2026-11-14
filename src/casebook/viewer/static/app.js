@@ -736,6 +736,7 @@ async function openSession(id) {
       <div class="titles"><h2><span class="session-id" tabindex="0"></span><span class="title"></span><span class="badge running" hidden></span></h2><p></p></div>
       <div class="session-actions">
         <a class="btn open-card" target="_blank" rel="noopener" hidden><span class="btn-icon" data-icon="external"></span>Abrir card</a>
+        <button class="new-query" data-tip="Correr una consulta tuya en esta sesión (el agente la ve)"><span class="btn-icon" data-icon="plus"></span><span>Consulta</span></button>
         <button class="copy-md"><span class="btn-icon" data-icon="copy"></span><span>Copiar Markdown</span></button>
         <a class="btn" href="/api/sessions/${id}/export.md?download=true"><span class="btn-icon" data-icon="download"></span>Descargar .md</a>
       </div>
@@ -743,6 +744,7 @@ async function openSession(id) {
     <div class="stats" aria-label="Llamadas por servicio"></div>
     <div class="filter-row"><div class="filter-main"><div class="card-filters" role="group" aria-label="Filtrar tarjetas"></div><div class="loop-control"></div></div><div class="filter-search"></div></div>`;
   fillIcons(head);
+  $(".new-query", head).addEventListener("click", () => window.manualEditor?.openNew());
   $(".copy-md", head).addEventListener("click", async (e) => {
     const md = await fetch(`/api/sessions/${id}/export.md`).then((r) => r.text());
     await navigator.clipboard.writeText(md);
@@ -1517,10 +1519,62 @@ function renderRuns(root) {
   }
 }
 
+// Contra la consulta de origen (repetida o editada): qué filas son nuevas y cuáles ya no están. La clave de fila
+// es _id (OpenSearch), id (MySQL) o @ptr (CloudWatch) si están en las dos; si no, la fila entera.
 function compareWithParent(card) {
-  // Fase 2: diff de filas contra la consulta de origen (se completa más abajo si hay datos).
-  if (!card || typeof diffRows !== "function") return;
-  diffRows(card);
+  if (!card?.data || !card.p.parent_query_id) return;
+  const parent = state.cards.get(card.p.parent_query_id);
+  if (!parent?.data) return;
+  const box = $(".diff", card.el);
+  const a = parent.data, b = card.data;
+  const short = `#${card.p.parent_query_id.slice(0, 6)}`;
+  box.hidden = false;
+  // Un solo número (un conteo): «7 → 9».
+  if (a.rows.length === 1 && b.rows.length === 1 && a.columns.length === 1 && b.columns.length === 1 &&
+      isNumeric(a.rows[0][0]) && isNumeric(b.rows[0][0])) {
+    const d = Number(b.rows[0][0]) - Number(a.rows[0][0]);
+    box.innerHTML = `<span class="diff-title"></span>`;
+    box.firstChild.textContent = d ? `${a.rows[0][0]} → ${b.rows[0][0]} (${d > 0 ? "+" : "−"}${Math.abs(d)}) respecto de ${short}`
+      : `Mismo valor que ${short}: ${b.rows[0][0]}`;
+    box.dataset.changed = d ? "1" : "0";
+    return;
+  }
+  const keyCol = ["_id", "id", "@ptr"].find((k) => a.columns.includes(k) && b.columns.includes(k));
+  const keyOf = (data) => {
+    const i = keyCol ? data.columns.indexOf(keyCol) : -1;
+    return (r) => (i >= 0 ? String(r[i]) : JSON.stringify(r));
+  };
+  const ka = keyOf(a), kb = keyOf(b);
+  const before = new Map(a.rows.map((r) => [ka(r), r]));
+  const after = new Map(b.rows.map((r) => [kb(r), r]));
+  const added = b.rows.filter((r) => !before.has(kb(r)));
+  const removed = a.rows.filter((r) => !after.has(ka(r)));
+  const same = b.rows.length - added.length;
+  box.dataset.changed = added.length || removed.length ? "1" : "0";
+  if (!added.length && !removed.length) {
+    box.innerHTML = `<span class="diff-title"></span>`;
+    box.firstChild.textContent = `Mismas filas que ${short} (${same})` + (keyCol ? ` · comparadas por ${keyCol}` : "");
+    return;
+  }
+  box.innerHTML = `<span class="diff-title"></span><span class="diff-counts"><b class="diff-add"></b> · <b class="diff-del"></b> · <span class="diff-same"></span></span>
+    <button class="ghost diff-show" aria-expanded="false">Ver diferencias</button><div class="diff-tables" hidden></div>`;
+  $(".diff-title", box).textContent = `Comparada con ${short}` + (keyCol ? ` por ${keyCol}` : "") + ":";
+  $(".diff-add", box).textContent = `+${added.length} nuevas`;
+  $(".diff-del", box).textContent = `−${removed.length} ya no están`;
+  $(".diff-same", box).textContent = `${same} iguales`;
+  const tables = $(".diff-tables", box);
+  const btn = $(".diff-show", box);
+  btn.addEventListener("click", () => {
+    const open = tables.hidden;
+    tables.hidden = !open;
+    btn.setAttribute("aria-expanded", String(open));
+    btn.textContent = open ? "Ocultar diferencias" : "Ver diferencias";
+    if (open && !tables.childElementCount) {
+      if (added.length) tables.append(tableBlock({ name: "Nuevas", columns: b.columns, rows: added }, card.el));
+      if (removed.length) tables.append(tableBlock({ name: `Ya no están (estaban en ${short})`, columns: a.columns, rows: removed }, card.el));
+      refreshEmailVisibility(card.el);  // las tablas se agregan después de dibujarse: también ocultan correos
+    }
+  });
 }
 
 async function repeatQuery(qid, windowMode, btn) {

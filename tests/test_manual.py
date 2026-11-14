@@ -267,3 +267,50 @@ def test_export_marks_manual_and_pinned_queries(env):
     assert "2 consultas (1 del ingeniero)" in md
     assert "## Evidencia fijada por el ingeniero" in md and f"- `{qid}`" in md
     assert f"del ingeniero (repetida de `{original}`) · fijada" in md
+
+
+# --- validación en seco del editor -----------------------------------------------------------------------------
+
+
+def validate(client, tool, args, **kw):
+    return client.post("/api/manual/validate", headers=H, json={"tool": tool, "args": args, **kw}).json()
+
+
+def test_validate_runs_the_guards_without_recording(env):
+    _, rec, store, cfg, calls = env
+    before = len(store.events(rec.session_id))
+    with TestClient(create_app(store, cfg)) as client:
+        assert validate(client, "os_search", {"index": ".security", "env": "prod"})["error"].startswith("índice no permitido")
+        ok = validate(client, "os_search", {"index": "leads-*", "env": "prod", "query": {"match_all": {}}, "size": 3})
+        assert ok["ok"] and '"size": 3' in ok["final"] and '"timeout": "30s"' in ok["final"]
+        assert validate(client, "os_search", {"index": "leads-*", "env": "nope"})["ok"] is False
+        counted = validate(client, "os_count", {"index": "leads-*", "env": "prod"}, count=True)
+        assert counted["ok"] and counted["count"] == 7
+        assert validate(client, "db_select", {"sql": "DELETE FROM t", "env": "prod"})["ok"] is False
+        sql = validate(client, "db_select", {"sql": "SELECT id FROM lead", "env": "prod", "limit": 5})
+        assert sql["ok"] and sql["final"].endswith("LIMIT 5")
+        options = client.get("/api/manual/options").json()
+    assert {s["kind"] for s in options["sources"]} >= {"opensearch", "mysql"}
+    assert options["limits"]["db_max_limit"] == cfg.db.max_limit
+    assert len(store.events(rec.session_id)) == before  # nada quedó en la sesión
+    assert [c["path"] for c in calls] == ["leads-*/_count"]
+
+
+def test_validate_cloudwatch_estimates_and_says_when_to_confirm(tmp_path, monkeypatch):
+    import fake_logs
+    from casebook.config import CloudWatchSource
+    from casebook.providers.base import Estimate
+
+    fake = fake_logs.install(monkeypatch)
+    cfg = acme()
+    cfg.cloudwatch = {"default": CloudWatchSource("fake", {})}
+    store = Store(tmp_path / "t.db")
+    with TestClient(create_app(store, cfg)) as client:
+        cheap = validate(client, "cw_query", {"log_group": "/ecs/acme-api", "query": "fields @message", "start": "-1h"})
+        assert cheap["ok"] and cheap["needs_confirmation"] is False and cheap["estimate"]["gb"] == 2.0
+        fake.estimate_resp = Estimate(400e9, 2.0, True, 5)
+        pricey = validate(client, "cw_query", {"log_group": "/ecs/acme-api", "query": "fields @message", "start": "-1h"})
+        assert pricey["needs_confirmation"] is True and pricey["confirm_max_cost_usd"] > 3.0
+        assert validate(client, "cw_query", {"log_group": "a*", "query": "x", "start": "-1h"})["ok"] is False
+        assert validate(client, "cw_query", {"log_group": "/g", "query": "x", "start": "-30d"})["ok"] is False
+    store.close()
