@@ -81,6 +81,7 @@ def render(store: Store, session_id: int, max_rows: int = 20) -> str:
     order: list[tuple[str, Any]] = []
     drafts: dict[str, list[dict[str, Any]]] = {}
     health: dict[str, Any] | None = None
+    pinned: dict[str, None] = {}  # las fijadas en el visor, en orden
     total_cost = 0.0
     for ev in events:
         p = ev["payload"]
@@ -96,6 +97,10 @@ def render(store: Store, session_id: int, max_rows: int = 20) -> str:
             order.append(("rejected", ev))
         elif ev["type"] in ("query.approved", "query.denied") and ev["query_id"] in queries:
             queries[ev["query_id"]]["decision"] = ev["type"]
+        elif ev["type"] in ("query.pinned", "query.unpinned"):
+            pinned.pop(ev["query_id"], None)
+            if ev["type"] == "query.pinned":
+                pinned[ev["query_id"]] = None
         elif ev["type"] == "query.started":
             queries[ev["query_id"]] = {"start": ev, "end": None, "decision": None}
             order.append(("query", ev["query_id"]))
@@ -106,6 +111,7 @@ def render(store: Store, session_id: int, max_rows: int = 20) -> str:
                 total_cost += float(cost)
 
     n_queries = len(queries)
+    n_manual = sum(1 for q in queries.values() if q["start"]["payload"].get("origin") == "manual")
     n_failed = sum(1 for q in queries.values() if q["end"] and q["end"]["type"] == "query.failed")
     n_rejected = sum(1 for kind, _ in order if kind == "rejected")
     created = datetime.fromisoformat(session["created_at"]).astimezone().strftime("%Y-%m-%d %H:%M")
@@ -113,6 +119,8 @@ def render(store: Store, session_id: int, max_rows: int = 20) -> str:
 
     out = [f"# {title}", ""]
     summary = f"Sesión {session_id} · {created} · {n_queries} consultas"
+    if n_manual:
+        summary += f" ({n_manual} del ingeniero)"
     if n_failed:
         summary += f" ({n_failed} con error)"
     if n_rejected:
@@ -154,6 +162,15 @@ def render(store: Store, session_id: int, max_rows: int = 20) -> str:
     if conclusions:
         out += ["## Conclusión (última nota)", "", conclusions[-1]["payload"]["text"], ""]
 
+    key = [q for q in pinned if q in queries]
+    if key:
+        out += ["## Evidencia fijada por el ingeniero", ""]
+        for qid in key:
+            sp, end = queries[qid]["start"]["payload"], queries[qid]["end"]
+            rows = f" · {end['payload'].get('rows')} filas" if end and end["type"] == "query.finished" else ""
+            out.append(f"- `{qid}` · `{sp['tool']}` · {sp.get('purpose') or 'consulta'}{rows}")
+        out.append("")
+
     out += ["## Timeline", ""]
     for kind, item in order:
         if kind == "note":
@@ -186,6 +203,11 @@ def render(store: Store, session_id: int, max_rows: int = 20) -> str:
         status = "corriendo" if end is None else ("ok" if end["type"] == "query.finished" else "error")
         title = f" · {sp['purpose']}" if sp.get("purpose") else ""
         heading = f"### {_time(start['ts'])} · `{sp['tool']}`{title} · {status}"
+        if sp.get("origin") == "manual":
+            how = {"repeat": "repetida", "edit": "editada", "new": "nueva"}.get(sp.get("run_mode"), "manual")
+            heading += f" · del ingeniero ({how}" + (f" de `{sp['parent_query_id']}`" if sp.get("parent_query_id") else "") + ")"
+        if item in pinned:
+            heading += " · fijada"
         if end is not None and end["type"] == "query.finished":
             heading += f" · {_meta(end['payload'])}"
         if q["decision"] == "query.approved":

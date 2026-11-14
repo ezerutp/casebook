@@ -43,6 +43,23 @@ class Approval(BaseModel):
     approve: bool
 
 
+class RepeatQuery(BaseModel):
+    window: str = "same"  # cw_query: "same" (la misma ventana) o "shift" (la misma duración, hasta ahora)
+
+
+class ManualQuery(BaseModel):
+    tool: str
+    args: dict[str, Any] = {}
+    purpose: str
+    run_mode: str = "new"  # "edit" si viene de otra tarjeta (parent_query_id)
+    parent_query_id: str | None = None
+    wait: bool = False  # responder cuando termina (la guía del editor espera los índices o los campos)
+
+
+class Pin(BaseModel):
+    pinned: bool
+
+
 class SlackWatchEnable(BaseModel):
     lookback_minutes: int = 0
 
@@ -529,6 +546,66 @@ def create_app(store: Store, cfg: Config | None = None, served_by: str = "viewer
             raise HTTPException(409, "la consulta ya se decidió o terminó")
         store.add_event(session_id, "query.approved" if body.approve else "query.denied", {}, query_id)
         return {"ok": True}
+
+    def manual_runner():
+        from ..manual import ManualRunner
+
+        if getattr(app.state, "manual", None) is None:
+            app.state.manual = ManualRunner(store, cfg)
+        return app.state.manual
+
+    async def launch(session_id: int, tool: str, args: dict, purpose: str, **kw) -> dict:
+        from ..manual import ManualError
+
+        config.refresh(cfg)
+        try:
+            return await manual_runner().run(session_id, tool, args, purpose, **kw)
+        except ManualError as exc:
+            raise HTTPException(422, str(exc)) from exc
+
+    @app.post("/api/queries/{query_id}/repeat", status_code=202, dependencies=[Depends(require_viewer)])
+    async def repeat_query(query_id: str, body: RepeatQuery) -> dict:
+        from .. import manual
+
+        start = manual.started_event(store, query_id)
+        if start is None:
+            raise HTTPException(404, "consulta no encontrada")
+        tool = start["payload"]["tool"]
+        if tool not in manual.REPEATABLE:
+            raise HTTPException(422, f"{tool} no se repite: no es evidencia del caso")
+        args = manual.args_of(start)
+        if tool == "cw_query" and body.window == "shift":
+            args = manual.shift_window(args)
+        return await launch(start["session_id"], tool, args, start["payload"].get("purpose") or tool,
+                            run_mode="repeat", parent_query_id=manual.root_of(start))
+
+    @app.get("/api/queries/{query_id}/args")
+    def query_args(query_id: str) -> dict:
+        """Lo que necesita el editor para «Editar y ejecutar»: tool, argumentos y para qué era."""
+        from .. import manual
+
+        start = manual.started_event(store, query_id)
+        if start is None:
+            raise HTTPException(404, "consulta no encontrada")
+        p = start["payload"]
+        return {"tool": p["tool"], "args": manual.args_of(start), "purpose": p.get("purpose"),
+                "session_id": start["session_id"], "query": p.get("query")}
+
+    @app.post("/api/sessions/{session_id}/queries", status_code=202, dependencies=[Depends(require_viewer)])
+    async def manual_query(session_id: int, body: ManualQuery) -> dict:
+        if body.parent_query_id and store.query_session(body.parent_query_id) != session_id:
+            raise HTTPException(422, "la consulta de origen no es de esta sesión")
+        return await launch(session_id, body.tool, body.args, body.purpose, run_mode=body.run_mode,
+                            parent_query_id=body.parent_query_id, wait=body.wait)
+
+    @app.post("/api/queries/{query_id}/pin", dependencies=[Depends(require_viewer)])
+    def pin_query(query_id: str, body: Pin) -> dict:
+        session_id = store.query_session(query_id)
+        if session_id is None:
+            raise HTTPException(404, "consulta no encontrada")
+        if (query_id in store.pinned_queries(session_id)) != body.pinned:
+            store.add_event(session_id, "query.pinned" if body.pinned else "query.unpinned", {}, query_id)
+        return {"pinned": store.pinned_queries(session_id)}
 
     @app.post("/api/queries/{query_id}/cancel", status_code=202, dependencies=[Depends(require_viewer)])
     def cancel_query(query_id: str) -> dict:

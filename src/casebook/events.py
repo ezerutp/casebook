@@ -6,7 +6,9 @@ Tipos de evento:
     note              {text}
     draft             {card, text}   (borrador de comentario para Jira; no se publica)
     health            {checks: [{name, status, detail}]}   (estado de conexiones al abrir la sesión)
-    query.started     {tool, params, query, purpose?}
+    query.started     {tool, params, query, purpose?, args?, origin?, run_mode?, parent_query_id?, run_id?}
+                      (args: los argumentos de la tool, para repetirla; origin "manual": la lanzó el ingeniero
+                      desde el visor, con run_mode "repeat", "edit" o "new")
     query.progress    {message, ...}
     query.finished    {duration_ms, rows, result: {columns, rows}, meta}
     query.failed      {duration_ms, error}
@@ -14,6 +16,7 @@ Tipos de evento:
     query.approval_requested {reason, timeout_s}   (consulta cara esperando decisión en el visor)
     query.approved / query.denied {}               (los escribe el visor)
     query.rejected    {tool, params, reason}   (bloqueada por un guard antes de ejecutarse)
+    query.pinned / query.unpinned {}   (el ingeniero la fijó arriba en el visor: evidencia que considera clave)
 """
 
 from __future__ import annotations
@@ -37,6 +40,8 @@ RAW_MAX_BYTES = 2_000_000
 
 # Para qué es la consulta en curso (lo pasa Claude en cada tool; lo fija el decorador de las tools).
 current_purpose: ContextVar[str | None] = ContextVar("current_purpose", default=None)
+# Los argumentos con que se llamó la tool en curso (sin `purpose`): quedan en query.started para poder repetirla.
+current_args: ContextVar[dict[str, Any] | None] = ContextVar("current_args", default=None)
 
 
 class QueryHandle:
@@ -110,11 +115,16 @@ class NoActiveSession(Exception):
 PROGRESS = "slack.progress"
 
 class Recorder:
+    # Si las consultas pasan por el gate de la revisión (session_finish). Las del ingeniero (manual.py) no.
+    gated = True
+
     def __init__(self, store: Store):
         self.store = store
         self.session_id: int | None = None
         self.redactor = Redactor()
         self.queries_started = 0
+        # Hasta qué evento se le contó al agente la actividad del ingeniero en el visor, por sesión.
+        self._activity_cursor: dict[int, int] = {}
         # El MCP lo apaga: tras una reconexión la sesión activa se pierde y abrir otra sola reparte la evidencia.
         self.implicit_sessions = True
 
@@ -122,6 +132,7 @@ class Recorder:
         session = self.store.create_session(name, card)
         self.session_id = session["id"]
         self._emit("session.started", {"name": session["name"], "card": session["card"]})
+        self._activity_cursor[self.session_id] = self.store.latest_event_id()
         return session
 
     def resume_session(self, session_id: int) -> dict[str, Any]:
@@ -131,6 +142,25 @@ class Recorder:
         self.session_id = session_id
         self._emit("session.resumed", {"name": session["name"], "card": session["card"]})
         return session
+
+    def engineer_activity(self, since_agent: bool = False) -> dict[str, Any] | None:
+        """Lo que hizo el ingeniero en el visor (consultas manuales y fijadas) que el agente todavía no vio, o
+        None. Con `since_agent` (al reanudar) cuenta desde lo último que hizo el agente en la sesión."""
+        from .manual import activity
+
+        sid = self.session_id
+        if sid is None:
+            return None
+        if since_agent:
+            after = self.store.last_agent_event_id(sid)
+        elif sid in self._activity_cursor:
+            after = self._activity_cursor[sid]
+        else:  # una sesión que este proceso no abrió ni reanudó: no hay de dónde contar
+            self._activity_cursor[sid] = self.store.latest_event_id()
+            return None
+        report, cursor = activity(self.store, sid, after)
+        self._activity_cursor[sid] = cursor
+        return report
 
     def ensure_session(self) -> int:
         if self.session_id is None:
@@ -166,8 +196,12 @@ class Recorder:
     def draft(self, card: str, text: str) -> dict[str, Any]:
         return self._emit("draft", {"card": card, "text": text})
 
+    def query_extra(self) -> dict[str, Any]:
+        """Campos extra de query.started (manual.py marca así las consultas del ingeniero)."""
+        return {}
+
     def reject(self, tool: str, params: dict[str, Any], reason: str) -> dict[str, Any]:
-        payload = {"tool": tool, "params": params, "reason": reason}
+        payload = {"tool": tool, "params": params, "reason": reason, **self.query_extra()}
         if current_purpose.get():
             payload["purpose"] = current_purpose.get()
         return self._emit("query.rejected", payload, uuid.uuid4().hex[:12])
@@ -181,6 +215,9 @@ class Recorder:
         payload = {"tool": tool, "params": params, "query": query}
         if current_purpose.get():
             payload["purpose"] = current_purpose.get()
+        if current_args.get() is not None:
+            payload["args"] = current_args.get()
+        payload.update(self.query_extra())
         if cancellable:
             payload["cancellable"] = True
         handle.start_event = self._emit("query.started", payload, handle.query_id)
