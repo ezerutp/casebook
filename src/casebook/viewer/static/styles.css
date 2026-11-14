@@ -1516,3 +1516,64 @@ tr:hover td { background: var(--code-bg); }
 @media (prefers-reduced-motion: reduce) {
   .pick-ghosts li { animation: none; }
 }
+
+/* --- consultas del ingeniero: repetir, editar, fijar y «Tus consultas» ----------------------------------- */
+.card .origin-pill {
+  display: inline-flex; align-items: center; gap: 4px;
+  font-size: 11px; font-weight: 600; line-height: 18px; padding: 0 7px 0 5px; border-radius: 999px;
+  color: var(--accent); background: var(--accent-soft); white-space: nowrap;
+}
+.card .origin-pill .btn-icon, .card .origin-pill svg { width: 12px; height: 12px; }
+.card .run-from { padding: 0 6px; font-family: var(--mono); font-size: 11.5px; color: var(--accent); }
+.card[data-pinned="1"] { box-shadow: inset 0 0 0 1px color-mix(in srgb, var(--accent) 45%, transparent); }
+
+.card-actions { display: flex; flex-wrap: wrap; gap: 4px; margin-top: 8px; padding-top: 6px; border-top: 1px dashed var(--border); }
+.card-actions button { padding: 2px 8px; font-size: 12px; display: inline-flex; align-items: center; gap: 5px; }
+.card-actions .btn-icon, .card-actions svg { width: 14px; height: 14px; }
+.card-actions .pin { margin-left: auto; }
+.card-actions .pin[aria-pressed="true"] { color: var(--accent); background: var(--accent-soft); }
+
+.runs { display: flex; flex-wrap: wrap; align-items: center; gap: 6px; margin-top: 8px; }
+.runs-label { font-size: 11px; font-weight: 600; letter-spacing: 0.03em; text-transform: uppercase; color: var(--muted); }
+.run-chip {
+  display: inline-flex; align-items: center; gap: 6px; padding: 2px 8px; border-radius: 999px;
+  font-size: 12px; font-variant-numeric: tabular-nums; background: var(--panel);
+}
+.run-chip b { font-weight: 700; }
+.run-chip .run-meta { color: var(--muted); }
+.run-chip[aria-current="true"] { border-color: var(--accent); background: var(--accent-soft); cursor: default; }
+.run-chip[aria-current="true"] .run-meta { color: var(--text); }
+.run-chip.failed .run-meta { color: var(--fail); }
+.run-delta { font-weight: 700; }
+.run-delta[data-sign="up"] { color: var(--run); }
+.run-delta[data-sign="down"] { color: var(--svc-note); }
+.run-delta[data-sign="0"] { color: var(--ok); }
+
+/* «Tuyas»: las originales de las que salieron tus consultas se ven atenuadas, como contexto. */
+.timeline[data-filter="manual"] > .card[data-origin="agent"]:not([data-pinned="1"]) { opacity: 0.55; }
+
+.mine { margin: 0 0 12px; border: 1px solid var(--border); border-left: 3px solid var(--accent); border-radius: 10px; background: var(--panel); }
+.mine-toggle { width: 100%; justify-content: flex-start; display: flex; align-items: center; gap: 8px; padding: 8px 12px; color: var(--text); font-weight: 600; border-radius: 10px; }
+.mine-toggle .chev { width: 14px; height: 14px; transition: transform 0.15s; transform: rotate(90deg); }
+.mine-toggle .chev svg { width: 14px; height: 14px; }
+.mine-toggle[aria-expanded="false"] .chev { transform: none; }
+.mine-toggle .count { color: var(--muted); font-variant-numeric: tabular-nums; }
+.mine-list { list-style: none; margin: 0; padding: 0 6px 6px; display: grid; gap: 2px; }
+.mine-row {
+  display: flex; align-items: center; gap: 8px; padding: 5px 6px; border-radius: 6px; cursor: pointer; font-size: 12.5px; min-width: 0;
+}
+.mine-row:hover { background: var(--code-bg); }
+.mine-row .mine-kind, .mine-row .mine-kind svg { width: 14px; height: 14px; color: var(--accent); flex: none; }
+.mine-row .svc-icon, .mine-row .svc-icon svg { width: 15px; height: 15px; }
+.mine-row .env-pill { font-size: 9.5px; font-weight: 700; letter-spacing: 0.06em; line-height: 15px; padding: 0 4px; border-radius: 3px; color: var(--panel); background: var(--muted); }
+.mine-row .env-pill[data-tone="prod"] { background: var(--fail); }
+.mine-row .env-pill[data-tone="qa"] { background: var(--text); }
+.mine-row .mine-purpose { flex: 1; min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; font-weight: 500; }
+.mine-row .mine-result { color: var(--muted); font-variant-numeric: tabular-nums; white-space: nowrap; }
+.mine-row.failed .mine-result { color: var(--fail); }
+.mine-row.running .mine-result { color: var(--run); }
+.mine-row time { color: var(--muted); font-size: 11.5px; font-variant-numeric: tabular-nums; }
+.mine-go { padding: 0 4px 0 8px; font-size: 12px; display: inline-flex; align-items: center; }
+.mine-go .btn-icon, .mine-go svg { width: 12px; height: 12px; }
+@media (max-width: 640px) { .mine-row time, .mine-row .svc-icon { display: none; } }
+.chip-filter.svc-manual .svc-icon { color: var(--accent); }

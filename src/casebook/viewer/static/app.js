@@ -47,6 +47,10 @@ const ICONS = {
   fail: svg('<circle cx="12" cy="12" r="9"/><path d="m9 9 6 6M15 9l-6 6"/>'),
   unknown: svg('<circle cx="12" cy="12" r="9"/><path d="M9.6 9.5a2.5 2.5 0 0 1 4.8 1c0 1.7-2.4 2-2.4 3.5M12 17h.01"/>'),
   chevron: svg('<path d="m9 6 6 6-6 6"/>'),
+  pin: svg('<path d="M9 4h6l-1 6 4 4H6l4-4z"/><path d="M12 14v7"/>'),
+  edit: svg('<path d="M4 20h4L19 9l-4-4L4 16z"/><path d="m13.5 6.5 4 4"/>'),
+  plus: svg('<path d="M12 5v14M5 12h14"/>'),
+  user: svg('<circle cx="12" cy="8" r="4"/><path d="M4 21c0-4 3.6-6 8-6s8 2 8 6"/>'),
   spark: svg('<path d="M12 3l1.8 5.2L19 10l-5.2 1.8L12 17l-1.8-5.2L5 10l5.2-1.8z"/><path d="M19 15.5l.7 1.8 1.8.7-1.8.7-.7 1.8-.7-1.8-1.8-.7 1.8-.7z"/>'),
 };
 const SERVICES = { os: "OpenSearch", cw: "CloudWatch", db: "MySQL" };
@@ -71,6 +75,10 @@ const state = {
   draft: null,        // el borrador más nuevo {key, card, text}
   sources: new Map(), // "svc|nombre" -> {svc, name, total, errors}
   filter: { kind: "all", text: "" },
+  runs: new Map(),    // query_id original -> [query_id de sus repeticiones], en orden
+  pinned: new Set(),  // consultas fijadas en el visor
+  manual: [],         // consultas del ingeniero, en orden
+  focusNext: null,    // la consulta manual recién lanzada: se enfoca al llegar su tarjeta
 };
 
 const timeFmt = new Intl.DateTimeFormat(undefined, { hour: "2-digit", minute: "2-digit", second: "2-digit" });
@@ -699,6 +707,10 @@ function resetSessionState() {
   draftHistory.close();
   state.sources = new Map();
   state.filter = { kind: "all", text: "" };
+  state.runs = new Map();
+  state.pinned = new Set();
+  state.manual = [];
+  state.focusNext = null;
   runCard.reset();
 }
 
@@ -708,6 +720,7 @@ async function openSession(id) {
   resetSessionState();
   threadCheck.reset();
   $("#timeline").replaceChildren();
+  renderMine();
   renderSessions();
   renderSummary();
 
@@ -747,6 +760,8 @@ async function openSession(id) {
   const events = await fetch(`/api/sessions/${id}/events`).then((r) => r.json());
   if (state.current !== id) return;
   events.forEach((ev) => applyEvent(ev, false));
+  state.runs.forEach((_, root) => renderRuns(root));
+  renderMine();
   // Un análisis que sigue en curso va primero también al abrir la sesión, no solo con los eventos en vivo.
   const running = runCard.pinned();
   if (running) $("#timeline").prepend(running);
@@ -989,6 +1004,7 @@ const KINDS = [
   { kind: "slack", label: "Slack", icon: "slack" },
   { kind: "note", label: "Notas", icon: "note" },
   { kind: "err", label: "Errores", icon: "warn" },
+  { kind: "manual", label: "Tuyas", icon: "user" },
 ];
 
 function renderFilters() {
@@ -1038,6 +1054,7 @@ function updateFilterCounts() {
     slack: count((c) => c.dataset.kind === "slack"),
     note: count((c) => c.dataset.kind === "note"),
     err: count((c) => c.dataset.error === "1"),
+    manual: count((c) => c.dataset.origin === "manual"),
   };
   document.querySelectorAll(".chip-filter").forEach((b) => {
     const n = counts[b.dataset.kind];
@@ -1050,11 +1067,14 @@ function updateFilterCounts() {
 function cardMatches(el) {
   const { kind, text } = state.filter;
   if (kind === "err" && el.dataset.error !== "1") return false;
-  if (kind !== "all" && kind !== "err" && el.dataset.kind !== kind) return false;
+  // Tuyas: las manuales, las fijadas y, atenuadas, las originales de las que salieron (para comparar).
+  if (kind === "manual" && !(el.dataset.origin === "manual" || el.dataset.pinned === "1" || el.dataset.hasManual === "1")) return false;
+  if (!["all", "err", "manual"].includes(kind) && el.dataset.kind !== kind) return false;
   return !text || el.textContent.toLowerCase().includes(text);
 }
 
 function applyFilters() {
+  $("#timeline").dataset.filter = state.filter.kind;
   const cards = [...$("#timeline").children];
   cards.forEach((el) => (el.hidden = !cardMatches(el)));
   $("#filtered-empty").hidden = !cards.length || cards.some((el) => !el.hidden);
@@ -1276,10 +1296,16 @@ function applyEvent(ev, live = true) {
       const svc = svcOf(p.tool);
       const sources = sourcesOf(p);
       addSources(sources);
-      state.cards.set(ev.query_id, { el, data: null, svc, sources });
+      const card = { el, data: null, svc, sources, p, ts: ev.ts, rows: null, status: "running" };
+      state.cards.set(ev.query_id, card);
+      setupRuns(card, ev.query_id, p);
       bump(svc, { total: 1, running: 1 });
       summary = true;
       add(el);
+      if (state.focusNext === ev.query_id) {
+        state.focusNext = null;
+        if (live) requestAnimationFrame(() => focusCard(ev.query_id));
+      }
       break;
     }
     case "query.progress": {
@@ -1325,6 +1351,15 @@ function applyEvent(ev, live = true) {
       add(el);
       break;
     }
+    case "query.pinned":
+    case "query.unpinned": {
+      if (ev.type === "query.pinned") state.pinned.add(ev.query_id);
+      else state.pinned.delete(ev.query_id);
+      const card = state.cards.get(ev.query_id);
+      if (card) paintPin(card);
+      if (live) renderMine();
+      break;
+    }
     case "query.cancel_requested": {
       const card = state.cards.get(ev.query_id);
       if (!card) break;
@@ -1343,6 +1378,7 @@ function applyEvent(ev, live = true) {
       renderKnowledgeLinks(card.el, p.knowledge);
       card.data = p.result;
       renderResult(card);
+      settleRun(card, ev.query_id, "ok", p.rows, live);
       break;
     }
     case "query.failed": {
@@ -1359,6 +1395,7 @@ function applyEvent(ev, live = true) {
       err.textContent = p.error;
       renderKnowledgeLinks(card.el, p.knowledge);
       markSourceErrors(card.sources);
+      settleRun(card, ev.query_id, "failed", null, live);
       summary = true;
       break;
     }
@@ -1372,6 +1409,209 @@ function applyEvent(ev, live = true) {
     if (summary) renderSummary();
     applyFilters();
   }
+}
+
+// --- consultas del ingeniero: repetir, editar y fijar desde la tarjeta ------------------------------------------
+
+const REPEATABLE = new Set(["os_search", "os_count", "db_select", "cw_query"]);
+const RUN_LABEL = { repeat: "repetida", edit: "editada", new: "nueva" };
+const RUN_ICON = { repeat: "refresh", edit: "edit", new: "plus" };
+
+function setupRuns(card, qid, p) {
+  const { el } = card;
+  const manual = p.origin === "manual";
+  el.dataset.origin = manual ? "manual" : "agent";
+  if (manual) {
+    const pill = $(".origin-pill", el);
+    pill.hidden = false;
+    pill.innerHTML = `<span class="btn-icon" aria-hidden="true">${ICONS[RUN_ICON[p.run_mode]] || ICONS.user}</span><span></span>`;
+    pill.lastChild.textContent = `Tú · ${RUN_LABEL[p.run_mode] || "manual"}`;
+    pill.dataset.tip = "La corriste tú desde el visor. El agente la ve como evidencia de la sesión.";
+    if (p.parent_query_id) {
+      const from = $(".run-from", el);
+      from.hidden = false;
+      from.textContent = `de #${p.parent_query_id.slice(0, 6)}`;
+      from.dataset.tip = "Ir a la consulta de la que salió";
+      from.addEventListener("click", () => focusCard(p.parent_query_id));
+      const parent = state.cards.get(p.parent_query_id);
+      if (parent) parent.el.dataset.hasManual = "1";
+    }
+    state.manual.push(qid);
+  }
+  // Las repeticiones se agrupan bajo la original (las ediciones son otra consulta: solo la enlazan).
+  card.root = manual && p.run_mode === "repeat" && p.parent_query_id ? p.parent_query_id : null;
+  if (card.root) {
+    if (!state.runs.has(card.root)) state.runs.set(card.root, []);
+    state.runs.get(card.root).push(qid);
+    renderRuns(card.root);
+  }
+
+  const can = REPEATABLE.has(p.tool);
+  el.querySelectorAll(".repeat").forEach((btn) => {
+    btn.hidden = !can || (btn.dataset.window === "shift" && p.tool !== "cw_query");
+    btn.addEventListener("click", () => repeatQuery(qid, btn.dataset.window, btn));
+  });
+  if (p.tool === "cw_query") $(".repeat[data-window='same'] span:last-child", el).textContent = "Repetir misma ventana";
+  const edit = $(".edit-run", el);
+  edit.hidden = !can;
+  edit.addEventListener("click", () => window.manualEditor?.openFrom(qid));
+  $(".pin", el).addEventListener("click", (e) => togglePin(qid, e.currentTarget));
+  paintPin(card);
+}
+
+function settleRun(card, qid, status, rows, live) {
+  card.status = status;
+  card.rows = rows;
+  card.el.querySelectorAll(".repeat").forEach((b) => (b.disabled = false));
+  const root = card.root || (state.runs.has(qid) ? qid : null);
+  if (root) renderRuns(root);
+  compareWithParent(card);
+  state.runs.get(qid)?.forEach((id) => compareWithParent(state.cards.get(id)));
+  if (live) renderMine();
+}
+
+function paintPin(card) {
+  const pinned = state.pinned.has(card.el.dataset.key);
+  card.el.dataset.pinned = pinned ? "1" : "";
+  const btn = $(".pin", card.el);
+  btn.setAttribute("aria-pressed", String(pinned));
+  $("span:last-child", btn).textContent = pinned ? "Fijada" : "Fijar";
+}
+
+function deltaText(rows, base) {
+  if (rows == null || base == null) return "";
+  const d = rows - base;
+  return d === 0 ? "=" : d > 0 ? `+${d}` : `−${-d}`;
+}
+
+// «Ejecuciones» en la original y en cada repetición: quién, cuándo, cuántas filas y la diferencia con la primera.
+function renderRuns(root) {
+  const base = state.cards.get(root);
+  const ids = [root, ...(state.runs.get(root) || [])].filter((id) => state.cards.has(id));
+  if (!base || ids.length < 2) return;
+  for (const owner of ids) {
+    const box = $(".runs", state.cards.get(owner).el);
+    box.hidden = false;
+    const label = document.createElement("span");
+    label.className = "runs-label";
+    label.textContent = "Ejecuciones";
+    box.replaceChildren(label, ...ids.map((id, i) => {
+      const c = state.cards.get(id);
+      const chip = document.createElement("button");
+      chip.className = `run-chip ${c.status}`;
+      chip.setAttribute("aria-current", String(id === owner));
+      const who = c.p.origin === "manual" ? "tú" : "agente";
+      const result = c.status === "running" ? "corriendo" : c.status === "failed" ? "error" : `${c.rows} filas`;
+      const delta = i && c.status === "ok" && base.status === "ok" ? deltaText(c.rows, base.rows) : "";
+      chip.innerHTML = `<b></b><span class="run-meta"></span>${delta ? '<span class="run-delta"></span>' : ""}`;
+      chip.children[0].textContent = String(i + 1);
+      chip.children[1].textContent = `${who} · ${hourFmt.format(new Date(c.ts))} · ${result}`;
+      if (delta) {
+        chip.children[2].textContent = delta;
+        chip.children[2].dataset.sign = delta === "=" ? "0" : delta[0] === "+" ? "up" : "down";
+      }
+      chip.dataset.tip = id === owner ? "Esta ejecución" : "Ir a esta ejecución";
+      chip.addEventListener("click", () => id !== owner && focusCard(id));
+      return chip;
+    }));
+  }
+}
+
+function compareWithParent(card) {
+  // Fase 2: diff de filas contra la consulta de origen (se completa más abajo si hay datos).
+  if (!card || typeof diffRows !== "function") return;
+  diffRows(card);
+}
+
+async function repeatQuery(qid, windowMode, btn) {
+  btn.disabled = true;
+  const r = await action(`/api/queries/${qid}/repeat`, { window: windowMode });
+  btn.disabled = false;
+  if (!r.ok) return notice("No se pudo repetir", await errorText(r), "fail");
+  state.focusNext = (await r.json()).query_id;
+  if (state.cards.has(state.focusNext)) {
+    focusCard(state.focusNext);
+    state.focusNext = null;
+  }
+}
+
+async function togglePin(qid, btn) {
+  btn.disabled = true;
+  const r = await action(`/api/queries/${qid}/pin`, { pinned: !state.pinned.has(qid) });
+  btn.disabled = false;
+  if (!r.ok) notice("No se pudo fijar", await errorText(r), "fail");
+}
+
+async function errorText(r) {
+  try {
+    const body = await r.json();
+    return typeof body.detail === "string" ? body.detail : JSON.stringify(body.detail);
+  } catch {
+    return `HTTP ${r.status}`;
+  }
+}
+
+let noticeTimer;
+function notice(title, text, kind = "ok") {
+  const el = $("#manual-notice");
+  el.className = `knowledge-notice manual-notice ${kind}`;
+  el.innerHTML = `<div class="text"><strong></strong><p></p></div><button class="icon-btn" aria-label="Cerrar">${ICONS.close}</button>`;
+  $("strong", el).textContent = title;
+  $("p", el).textContent = text || "";
+  $("p", el).hidden = !text;
+  $("button", el).addEventListener("click", () => (el.hidden = true));
+  el.hidden = false;
+  clearTimeout(noticeTimer);
+  noticeTimer = setTimeout(() => (el.hidden = true), kind === "fail" ? 9000 : 4000);
+}
+
+// «Tus consultas»: arriba del timeline, las fijadas primero y después las tuyas (la más nueva arriba). El timeline
+// no se reordena: cada fila lleva a su tarjeta en su lugar.
+const MINE_KEY = "casebook-mine-collapsed";
+function renderMine() {
+  const box = $("#mine");
+  const pinned = [...state.pinned].filter((id) => state.cards.has(id));
+  const mine = [...state.manual].reverse().filter((id) => !state.pinned.has(id) && state.cards.has(id));
+  const ids = [...pinned, ...mine];
+  box.hidden = !ids.length || state.current == null;
+  if (box.hidden) return;
+  let collapsed = false;
+  try { collapsed = localStorage.getItem(`${MINE_KEY}:${state.current}`) === "1"; } catch {}
+  const toggle = $(".mine-toggle", box);
+  toggle.setAttribute("aria-expanded", String(!collapsed));
+  toggle.onclick = () => {
+    try { localStorage.setItem(`${MINE_KEY}:${state.current}`, collapsed ? "0" : "1"); } catch {}
+    renderMine();
+  };
+  const anyManual = ids.some((id) => state.cards.get(id).p.origin === "manual");
+  $(".mine-title", box).textContent = anyManual ? "Tus consultas" : "Fijadas";
+  $(".count", box).textContent = ids.length;
+  const list = $(".mine-list", box);
+  list.hidden = collapsed;
+  list.replaceChildren(...ids.map((id) => {
+    const c = state.cards.get(id);
+    const li = document.createElement("li");
+    li.className = `mine-row svc-${c.svc || "other"} ${c.status}`;
+    const icon = state.pinned.has(id) ? "pin" : RUN_ICON[c.p.run_mode] || "user";
+    li.innerHTML = `<span class="mine-kind" aria-hidden="true">${ICONS[icon]}</span><span class="svc-icon" aria-hidden="true">${ICONS[c.svc] || ""}</span>
+      <span class="env-pill" hidden></span><span class="mine-purpose"></span><span class="mine-result"></span><time></time>
+      <button class="ghost mine-go">Ir<span class="btn-icon" aria-hidden="true">${ICONS.chevron}</span></button>`;
+    const env = c.p.params?.env;
+    if (env && env !== "default") {
+      const pill = $(".env-pill", li);
+      pill.hidden = false;
+      pill.textContent = env.toUpperCase();
+      pill.dataset.tone = envTone(env);
+    }
+    $(".mine-purpose", li).textContent = c.p.purpose || c.p.tool;
+    const parent = c.p.parent_query_id && state.cards.get(c.p.parent_query_id);
+    const delta = parent && c.status === "ok" && parent.status === "ok" ? deltaText(c.rows, parent.rows) : "";
+    const result = c.status === "running" ? "corriendo" : c.status === "failed" ? "error" : `${c.rows} filas`;
+    $(".mine-result", li).textContent = result + (delta ? ` (${delta})` : "");
+    $("time", li).textContent = hourFmt.format(new Date(c.ts));
+    li.addEventListener("click", () => focusCard(id));
+    return li;
+  }));
 }
 
 function addProgress(card, ts, message) {

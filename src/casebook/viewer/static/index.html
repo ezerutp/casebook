@@ -108,6 +108,10 @@
     </header>
     <div class="session-body">
       <div class="timeline-col">
+        <section class="mine" id="mine" hidden aria-label="Tus consultas y las fijadas">
+          <button class="ghost mine-toggle" aria-expanded="true"><span class="btn-icon chev" data-icon="chevron" aria-hidden="true"></span><span class="mine-title">Tus consultas</span><span class="count"></span></button>
+          <ul class="mine-list"></ul>
+        </section>
         <p class="filtered-empty" id="filtered-empty" hidden>Ninguna tarjeta coincide con el filtro.</p>
         <ol class="timeline" id="timeline"></ol>
       </div>
@@ -230,6 +234,8 @@
         <span class="svc-icon" aria-hidden="true"></span>
         <span class="env-pill" hidden></span>
         <span class="tool"></span>
+        <span class="origin-pill" hidden></span>
+        <button class="ghost run-from" hidden></button>
         <span class="purpose"></span>
         <span class="status"></span>
         <button class="ghost copy-query" hidden><span class="btn-icon" data-icon="copy" aria-hidden="true"></span><span>Copiar consulta</span></button>
@@ -238,6 +244,7 @@
         <time></time>
       </div>
       <div class="meta"></div>
+      <div class="runs" hidden></div>
       <pre class="query-text"></pre>
       <details class="params"><summary>Parámetros</summary><pre></pre></details>
       <div class="approval" hidden>
@@ -258,8 +265,17 @@
         <div class="tables"></div>
         <pre class="json" hidden></pre>
       </div>
+      <div class="diff" hidden></div>
+      <div class="card-actions">
+        <button class="ghost repeat" hidden disabled data-window="same"><span class="btn-icon" data-icon="refresh" aria-hidden="true"></span><span>Repetir</span></button>
+        <button class="ghost repeat repeat-shift" hidden disabled data-window="shift" data-tip="La misma duración de ventana, terminando ahora"><span class="btn-icon" data-icon="clock" aria-hidden="true"></span><span>Repetir hasta ahora</span></button>
+        <button class="ghost edit-run" hidden><span class="btn-icon" data-icon="edit" aria-hidden="true"></span><span>Editar y ejecutar</span></button>
+        <button class="ghost pin" aria-pressed="false" data-tip="Fijar arriba: evidencia clave del caso (el agente lo ve)"><span class="btn-icon" data-icon="pin" aria-hidden="true"></span><span>Fijar</span></button>
+      </div>
     </li>
   </template>
+
+  <div id="manual-notice" class="knowledge-notice manual-notice" role="status" aria-live="polite" hidden></div>
 
   <template id="tpl-table">
     <section class="table-block">
