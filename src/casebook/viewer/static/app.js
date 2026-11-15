@@ -1525,7 +1525,7 @@ function compareWithParent(card) {
   if (!card?.data || !card.p.parent_query_id) return;
   const parent = state.cards.get(card.p.parent_query_id);
   if (!parent?.data) return;
-  const box = $(".diff", card.el);
+  const box = $(".run-diff", card.el);
   const a = parent.data, b = card.data;
   const short = `#${card.p.parent_query_id.slice(0, 6)}`;
   box.hidden = false;
