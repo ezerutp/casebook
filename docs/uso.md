@@ -56,6 +56,8 @@ que las del agente (es el mismo código: el visor llama a las mismas tools).
   «Traer campos en vivo» y «Listar» si no hay nada guardado, plantillas por tipo de consulta y **consultas
   parecidas que ya funcionaron** en otras sesiones.
 
+![Editor de consultas con la guía: campos del índice, plantillas y consultas parecidas](img/consultas-manuales/despues-editor.jpg)
+
 Mientras escribes, el editor valida en seco (sin correr ni registrar nada) y muestra la consulta final. En
 CloudWatch estima el costo: si supera el tope, aceptas el costo en el mismo editor en lugar de aprobar la tarjeta.
 En OpenSearch, «Previsualizar cantidad» cuenta los documentos sin dejar tarjeta. Las consultas tuyas no esperan al
@@ -68,6 +70,8 @@ nuevas y las que ya no están (por `_id`, `id` o `@ptr`), con las diferencias de
 consultas** lista las fijadas y las tuyas con su resultado y lleva a cada tarjeta sin reordenar el timeline; el
 filtro **Tuyas** muestra solo esas, con las originales atenuadas como contexto. El export destaca la evidencia
 fijada y marca las consultas del ingeniero.
+
+![«Tus consultas» arriba del timeline, una consulta editada y una repetida con sus ejecuciones](img/consultas-manuales/despues-repetida.jpg)
 
 **El agente se entera.** Las respuestas de sus tools, `session_note` y el loop de revisiones traen
 `engineer_activity` con tus consultas y fijadas que todavía no vio (resultado y diferencia con la original), y
