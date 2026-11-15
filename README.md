@@ -130,7 +130,7 @@ Detalle en [Login y diagnóstico](docs/login-y-doctor.md#extensión-de-chrome).
 | [Configuración](docs/configuracion.md) | `config.toml`, fuentes, proveedores, textos y la vista Ajustes |
 | [Packs](docs/packs.md) | La configuración de un equipo: instalar, armar y compartir un pack |
 | [Login y diagnóstico](docs/login-y-doctor.md) | `login` por navegador, `doctor`, túneles y qué significa cada error |
-| [Uso del visor y las sesiones](docs/uso.md) | Visor, `query_id`, aprobaciones, búsqueda, retomar investigaciones y comandos |
+| [Uso del visor y las sesiones](docs/uso.md) | Visor, `query_id`, aprobaciones, consultas tuyas desde el visor, búsqueda, retomar investigaciones y comandos |
 | [Conocimiento entre investigaciones](docs/conocimiento.md) | `knowledge.db`, estados, vista Conocimiento, compartirlo (archivo o rama del equipo) y respaldo |
 | [Seguridad](docs/seguridad.md) | Solo lectura, guardas de MySQL, costo de CloudWatch, redacción y credenciales |
 
