@@ -173,6 +173,92 @@ class Store:
         ).fetchone()
         return row[0] if row else None
 
+    def query_events(self, query_id: str) -> list[dict[str, Any]]:
+        """Todos los eventos de una consulta, en orden."""
+        rows = self._conn.execute("SELECT * FROM events WHERE query_id = ? ORDER BY id", (query_id,)).fetchall()
+        return [{**dict(r), "payload": json.loads(r["payload"])} for r in rows]
+
+    def manual_events(self, session_id: int, after: int = 0) -> list[dict[str, Any]]:
+        """Lo que hizo el ingeniero en el visor después de `after`: consultas manuales (su query.started) y
+        consultas fijadas o desfijadas."""
+        rows = self._conn.execute(
+            """SELECT * FROM events WHERE session_id = ? AND id > ?
+                 AND ((type = 'query.started' AND json_extract(payload, '$.origin') = 'manual')
+                      OR type IN ('query.pinned', 'query.unpinned'))
+               ORDER BY id""",
+            (session_id, after),
+        ).fetchall()
+        return [{**dict(r), "payload": json.loads(r["payload"])} for r in rows]
+
+    def last_agent_event_id(self, session_id: int) -> int:
+        """El último evento que dejó el agente en la sesión (nota, borrador, revisión o consulta no manual)."""
+        row = self._conn.execute(
+            """SELECT COALESCE(MAX(id), 0) FROM events WHERE session_id = ?
+                 AND (type IN ('note', 'draft')
+                      OR (type = 'query.started' AND COALESCE(json_extract(payload, '$.origin'), 'agent') != 'manual'))""",
+            (session_id,),
+        ).fetchone()
+        return row[0]
+
+    def pinned_queries(self, session_id: int) -> list[str]:
+        """Las consultas fijadas de una sesión (la última decisión de cada una), en el orden en que se fijaron."""
+        rows = self._conn.execute(
+            "SELECT query_id, type FROM events WHERE session_id = ? AND type IN ('query.pinned', 'query.unpinned') "
+            "ORDER BY id",
+            (session_id,),
+        ).fetchall()
+        pinned: dict[str, None] = {}
+        for r in rows:
+            pinned.pop(r["query_id"], None)
+            if r["type"] == "query.pinned":
+                pinned[r["query_id"]] = None
+        return list(pinned)
+
+    def used_entities(self, tools: list[str], key: str, env: str | None, limit: int = 200) -> list[str]:
+        """Índices o log groups (params.<key>) ya consultados con esas tools en ese entorno, los más usados primero."""
+        marks = ",".join("?" * len(tools))
+        rows = self._conn.execute(
+            f"""SELECT json_extract(payload, '$.params.{key}') AS name, COUNT(*) AS n FROM events
+                WHERE type = 'query.started' AND json_extract(payload, '$.tool') IN ({marks})
+                  AND (? IS NULL OR json_extract(payload, '$.params.env') = ?) AND name IS NOT NULL
+                GROUP BY name ORDER BY n DESC LIMIT ?""",
+            (*tools, env, env, limit),
+        ).fetchall()
+        return [r["name"] for r in rows]
+
+    def similar_queries(self, tool: str, entity_key: str, entity: str, exclude_session: int | None = None,
+                        limit: int = 8) -> list[dict[str, Any]]:
+        """Consultas que ya funcionaron con la misma tool sobre la misma entidad (índice, log group o tabla en el
+        SQL), de cualquier sesión, las más nuevas primero. `entity_key` es la clave de params ("index",
+        "log_group") o "" para buscar la entidad en el texto de la consulta (SQL)."""
+        if entity_key:
+            cond, arg = f"json_extract(s.payload, '$.params.{entity_key}') = ?", entity
+        else:
+            cond = "lower(json_extract(s.payload, '$.query')) LIKE ? ESCAPE '\\'"
+            arg = "%" + entity.lower().replace("\\", "\\\\").replace("%", "\\%").replace("_", "\\_") + "%"
+        rows = self._conn.execute(
+            f"""SELECT s.id, s.session_id, s.query_id, s.ts, s.payload, f.payload AS finished
+                FROM events s JOIN events f ON f.query_id = s.query_id AND f.type = 'query.finished'
+                WHERE s.type = 'query.started' AND json_extract(s.payload, '$.tool') = ? AND {cond}
+                  AND s.session_id != COALESCE(?, -1)
+                ORDER BY s.id DESC LIMIT ?""",
+            (tool, arg, exclude_session, limit * 3),
+        ).fetchall()
+        out, seen = [], set()
+        for r in rows:
+            payload = json.loads(r["payload"])
+            key = payload.get("query") or json.dumps(payload.get("args"), sort_keys=True)
+            if key in seen:
+                continue
+            seen.add(key)
+            out.append({"session_id": r["session_id"], "query_id": r["query_id"], "ts": r["ts"],
+                        "purpose": payload.get("purpose"), "query": payload.get("query"),
+                        "params": payload.get("params"), "args": payload.get("args"),
+                        "rows": json.loads(r["finished"]).get("rows")})
+            if len(out) >= limit:
+                break
+        return out
+
     def search(self, text: str, limit: int = 50) -> list[dict[str, Any]]:
         """Busca en notas, borradores, consultas y resultados de todas las sesiones (LIKE sobre el JSON)."""
         pattern = "%" + text.replace("\\", "\\\\").replace("%", "\\%").replace("_", "\\_") + "%"

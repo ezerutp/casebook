@@ -12,7 +12,7 @@ from pydantic import Field
 from .. import config, guards
 from ..backends.errors import BackendError
 from ..config import Config
-from ..events import NoActiveSession, Recorder, current_purpose
+from ..events import NoActiveSession, Recorder, current_args, current_purpose
 
 Purpose = Annotated[
     str,
@@ -35,13 +35,16 @@ def expected_errors(recorder: Recorder, cfg: Config | None = None):
                 config.refresh(cfg)
             started = recorder.queries_started
             token = current_purpose.set((kwargs.pop("purpose", None) or "").strip() or None)
+            args_token = current_args.set({k: v for k, v in kwargs.items() if v is not None})
             try:
                 from ..review import ReviewError
                 try:
-                    recorder.store.review.query_gate(recorder.ensure_session())
+                    session_id = recorder.ensure_session()
+                    if recorder.gated:
+                        recorder.store.review.query_gate(session_id)
                 except ReviewError as exc:
                     raise ToolError(str(exc)) from exc
-                return await fn(*args, **kwargs)
+                return with_activity(await fn(*args, **kwargs), recorder)
             except guards.GuardError as exc:
                 if recorder.queries_started == started and recorder.session_id is not None:
                     recorder.reject(fn.__name__, kwargs, str(exc))
@@ -49,6 +52,7 @@ def expected_errors(recorder: Recorder, cfg: Config | None = None):
             except (BackendError, NoActiveSession) as exc:
                 raise ToolError(str(exc)) from exc
             finally:
+                current_args.reset(args_token)
                 current_purpose.reset(token)
 
         # La firma que ve el SDK incluye `purpose` (la tool no lo recibe: lo consume el wrapper).
@@ -66,6 +70,24 @@ def expected_errors(recorder: Recorder, cfg: Config | None = None):
         return wrapper
 
     return decorate
+
+
+def with_activity(result, recorder: Recorder):
+    """Le agrega a la respuesta de una tool lo que hizo el ingeniero en el visor desde la última vez que se le
+    contó (consultas manuales y fijadas), para que el agente no trabaje sin verlo."""
+    activity = getattr(recorder, "engineer_activity", lambda: None)()
+    if not activity or not isinstance(result, str):
+        return result
+    import json
+
+    try:
+        data = json.loads(result)
+    except ValueError:
+        return result
+    if isinstance(data, dict):
+        data["engineer_activity"] = activity
+        return json.dumps(data, ensure_ascii=False, default=str)
+    return result
 
 
 # --- varias fuentes del mismo tipo ([sources.<tipo>.<env>]) --------------------------------------------------

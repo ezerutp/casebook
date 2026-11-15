@@ -30,6 +30,12 @@ def _gb(n: Any) -> str:
     return f"{(n or 0) / 1e9:.2f} GB"
 
 
+def check_log_group(log_group: str) -> str:
+    if not _LOG_GROUP.match(log_group or "") or "*" in log_group:
+        raise guards.GuardError(f"log group inválido: {log_group!r} (un solo nombre exacto, sin comodines)")
+    return log_group
+
+
 def register(mcp: MCPServer, recorder: Recorder, cfg: Config, viewer_url: str | None) -> None:
     def footer(result: dict[str, Any], q: QueryHandle) -> dict[str, Any]:
         result = {"query_id": q.query_id, **result}  # para citar la consulta en las notas
@@ -64,11 +70,6 @@ def register(mcp: MCPServer, recorder: Recorder, cfg: Config, viewer_url: str | 
         if provider is None:
             raise guards.GuardError(systems.missing_provider_message(system))
         return provider.client(), provider.name
-
-    def check_log_group(log_group: str) -> str:
-        if not _LOG_GROUP.match(log_group) or "*" in log_group:
-            raise guards.GuardError(f"log group inválido: {log_group!r} (un solo nombre exacto, sin comodines)")
-        return log_group
 
     @tool
     @expected_errors(recorder, cfg)
