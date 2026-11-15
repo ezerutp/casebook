@@ -143,6 +143,7 @@ const manualEditor = (() => {
       if (form.svc === "os") el(".me-query").value = convertOs(text, tool);
       form.tool = tool;
       render();
+      window.manualGuide?.repaint?.();
       scheduleCheck(0);
     });
     el(".me-tools-step").hidden = TOOLS[form.svc].length < 2;
@@ -404,6 +405,223 @@ const manualEditor = (() => {
     scheduleCheck(0);
   }
 
-  return { openNew, openFrom, insert, setQuery, queryText, current: () => form, entity: () => el(".me-entity").value.trim() };
+  function setEntity(value) {
+    el(".me-entity").value = value;
+    scheduleCheck(0);
+    window.manualGuide?.entityChanged?.(form, value, 0);
+  }
+
+  function setEntities(names) {
+    el("#me-entities").replaceChildren(...[...new Set(names)].slice(0, 500).map((n) => {
+      const o = document.createElement("option");
+      o.value = n;
+      return o;
+    }));
+  }
+
+  return { openNew, openFrom, insert, setQuery, setEntity, setEntities, queryText,
+           current: () => form, entity: () => el(".me-entity").value.trim() };
 })();
 window.manualEditor = manualEditor;
+
+
+// Guía del editor: el esquema de la entidad (del conocimiento verificado o traído en vivo), plantillas por tipo de
+// consulta y consultas parecidas que ya funcionaron en otras sesiones. Traer en vivo corre la tool de
+// descubrimiento como consulta tuya de la sesión: queda en el timeline y el conocimiento la guarda.
+const manualGuide = (() => {
+  const box = $("#manual-editor .me-guide");
+  const KIND = { os: "opensearch", db: "mysql", cw: "cloudwatch" };
+  const NOUN = { os: "índices", db: "tablas", cw: "log groups" };
+  let data = null;
+  let form = null;
+  let timer = null;
+  let seq = 0;
+  let listed = [];  // lo último que trajo «Listar»
+
+  function ensure() {
+    if (box.childElementCount) return;
+    box.innerHTML = `
+      <section class="mg-sec">
+        <div class="mg-head"><h3>Esquema</h3><span class="mg-status"></span></div>
+        <p class="mg-msg"></p>
+        <input type="search" class="mg-filter" placeholder="Filtrar campos" aria-label="Filtrar campos" hidden>
+        <ul class="mg-fields"></ul>
+        <div class="mg-actions">
+          <button type="button" class="ghost mg-describe"><span class="btn-icon" aria-hidden="true">${ICONS.refresh}</span><span>Traer campos en vivo</span></button>
+          <button type="button" class="ghost mg-list"><span class="btn-icon" aria-hidden="true">${ICONS.sessions}</span><span>Listar</span></button>
+        </div>
+        <ul class="mg-listed" hidden></ul>
+      </section>
+      <section class="mg-sec">
+        <div class="mg-head"><h3>Plantillas</h3></div>
+        <ul class="mg-templates"></ul>
+      </section>
+      <section class="mg-sec mg-similar-sec">
+        <div class="mg-head"><h3>Parecidas que funcionaron</h3></div>
+        <ul class="mg-similar"></ul>
+      </section>`;
+    $(".mg-filter", box).addEventListener("input", paintFields);
+    $(".mg-describe", box).addEventListener("click", () => discover("describe"));
+    $(".mg-list", box).addEventListener("click", () => discover("list"));
+  }
+
+  function refresh(f) {
+    form = f;
+    ensure();
+    box.hidden = false;
+    listed = [];
+    $(".mg-listed", box).hidden = true;
+    load(manualEditor.entity());
+  }
+
+  function entityChanged(f, entity, delay = 350) {
+    form = f;
+    clearTimeout(timer);
+    timer = setTimeout(() => load(entity), delay);
+  }
+
+  async function load(entity) {
+    if (!form) return;
+    const s = ++seq;
+    const q = new URLSearchParams({ source: KIND[form.svc], env: form.env || "", entity: entity || "" });
+    const r = await fetch(`/api/manual/guide?${q}`);
+    if (s !== seq) return;
+    data = r.ok ? await r.json() : null;
+    paint();
+  }
+
+  function paint() {
+    if (!data) return;
+    const entity = manualEditor.entity();
+    manualEditor.setEntities([...data.entities.map((e) => e.name), ...listed]);
+    const schema = data.schema;
+    const status = $(".mg-status", box);
+    const msg = $(".mg-msg", box);
+    status.className = `mg-status ${schema ? schema.status : ""}`;
+    status.textContent = schema ? `${schema.status === "verified" ? "verificado" : schema.status}${schema.verified_at ? ` · ${String(schema.verified_at).slice(0, 10)}` : ""}` : "";
+    if (form.svc === "cw") {
+      msg.textContent = "CloudWatch no tiene esquema fijo: filtra por texto en @message y usa los campos que traiga el log.";
+    } else if (!entity) {
+      msg.textContent = form.svc === "os" ? "Escribe o elige un índice para ver sus campos." : "Escribe la tabla para ver sus columnas e índices.";
+    } else if (!schema) {
+      msg.textContent = `No hay un esquema guardado de ${entity} en este entorno. Tráelo en vivo (queda en la sesión y en el conocimiento).`;
+    } else {
+      msg.textContent = form.svc === "os"
+        ? `Campos de ${schema.entity}${schema.entity !== entity ? ` (índice concreto que matchea ${entity})` : ""}. Clic para insertar.`
+        : `Columnas de ${schema.entity}. Las indexadas van marcadas: filtra por ellas o la consulta pedirá aprobación.`;
+    }
+    $(".mg-filter", box).hidden = !schema || schema.fields.length < 8;
+    paintFields();
+    const describe = $(".mg-describe", box);
+    describe.hidden = form.svc === "cw" || !data.discover.describe;
+    describe.disabled = !entity;
+    $(".mg-list span:last-child", box).textContent = `Listar ${NOUN[form.svc]}`;
+    paintTemplates();
+    paintSimilar();
+  }
+
+  function paintFields() {
+    const list = $(".mg-fields", box);
+    const fields = data?.schema?.fields || [];
+    const f = $(".mg-filter", box).value.trim().toLowerCase();
+    list.replaceChildren(...fields.filter((x) => !f || String(x.name).toLowerCase().includes(f)).slice(0, 300).map((x) => {
+      const li = document.createElement("li");
+      const b = document.createElement("button");
+      b.type = "button";
+      b.className = "mg-field";
+      if (x.indexes?.length || x.key === "PRI") b.dataset.indexed = "1";
+      b.innerHTML = `<span class="mg-name"></span><span class="mg-type"></span>`;
+      b.firstChild.textContent = x.name;
+      b.lastChild.textContent = x.type + (x.indexes?.length ? ` · ${x.indexes.join(", ")}` : "");
+      b.dataset.tip = x.indexes?.length ? `Indexada (${x.indexes.join(", ")}): buen filtro` : "Insertar en la consulta";
+      b.addEventListener("click", () => manualEditor.insert(form.svc === "os" ? `"${x.name}"` : x.name));
+      li.append(b);
+      return li;
+    }));
+  }
+
+  function paintTemplates() {
+    const list = $(".mg-templates", box);
+    const tool = manualEditor.current()?.tool;
+    const items = data?.templates?.[tool] || [];
+    list.replaceChildren(...items.map((t) => {
+      const li = document.createElement("li");
+      const b = document.createElement("button");
+      b.type = "button";
+      b.className = "mg-item";
+      b.innerHTML = `<span class="mg-title"></span>${t.from ? '<span class="mg-tag"></span>' : ""}`;
+      b.firstChild.textContent = t.title;
+      if (t.from) b.lastChild.textContent = t.status === "verified" ? "conocimiento" : `conocimiento · ${t.status}`;
+      b.dataset.tip = t.text;
+      b.addEventListener("click", () => {
+        const entity = manualEditor.entity();
+        manualEditor.setQuery(form.svc === "db" && entity ? t.text.replaceAll("<tabla>", entity) : t.text);
+      });
+      li.append(b);
+      return li;
+    }));
+  }
+
+  function paintSimilar() {
+    const sec = $(".mg-similar-sec", box);
+    const tool = manualEditor.current()?.tool;
+    const items = data?.similar?.[tool] || [];
+    sec.hidden = !items.length;
+    $(".mg-similar", box).replaceChildren(...items.map((q) => {
+      const li = document.createElement("li");
+      const b = document.createElement("button");
+      b.type = "button";
+      b.className = "mg-item";
+      b.innerHTML = `<span class="mg-title"></span><span class="mg-tag"></span>`;
+      b.firstChild.textContent = q.purpose || q.query?.split("\n")[0] || tool;
+      b.lastChild.textContent = `${q.rows} filas · sesión ${q.session_id}`;
+      b.dataset.tip = q.query || "";
+      b.addEventListener("click", () => {
+        const a = q.args || {};
+        manualEditor.setQuery(q.args ? manualEditor.queryText(tool, a) : (q.query || ""),
+          { limit: a.limit, start: a.start, end: a.end, purpose: q.purpose });
+      });
+      li.append(b);
+      return li;
+    }));
+  }
+
+  async function discover(what) {
+    const entity = manualEditor.entity();
+    const btn = $(what === "describe" ? ".mg-describe" : ".mg-list", box);
+    const label = $("span:last-child", btn);
+    const original = label.textContent;
+    btn.disabled = true;
+    label.textContent = "Consultando…";
+    const r = await action(`/api/sessions/${form.sessionId}/discover`,
+      { source: KIND[form.svc], env: form.env, what, entity });
+    btn.disabled = false;
+    label.textContent = original;
+    if (!r.ok) {
+      $(".mg-msg", box).textContent = await errorText(r);
+      return;
+    }
+    const res = await r.json();
+    if (what === "describe") return load(entity);
+    listed = (res.rows || []).map((row) => String(row[0]));
+    const ul = $(".mg-listed", box);
+    ul.hidden = false;
+    const head = document.createElement("li");
+    head.className = "mg-listed-head";
+    head.textContent = listed.length ? `${listed.length} ${NOUN[form.svc]}: clic para elegir` : `No se encontraron ${NOUN[form.svc]}`;
+    ul.replaceChildren(head, ...listed.slice(0, 80).map((name) => {
+      const li = document.createElement("li");
+      const b = document.createElement("button");
+      b.type = "button";
+      b.className = "mg-chip";
+      b.textContent = name;
+      b.addEventListener("click", () => manualEditor.setEntity(name));
+      li.append(b);
+      return li;
+    }));
+    manualEditor.setEntities([...(data?.entities || []).map((e) => e.name), ...listed]);
+  }
+
+  return { refresh, entityChanged, repaint: () => data && paint() };
+})();
+window.manualGuide = manualGuide;

@@ -60,6 +60,13 @@ class Pin(BaseModel):
     pinned: bool
 
 
+class Discover(BaseModel):
+    source: str  # opensearch, mysql o cloudwatch
+    env: str | None = None
+    what: str  # "list" (índices, tablas o log groups) o "describe" (campos de la entidad)
+    entity: str = ""
+
+
 class ValidateQuery(BaseModel):
     tool: str
     args: dict[str, Any] = {}
@@ -610,6 +617,57 @@ def create_app(store: Store, cfg: Config | None = None, served_by: str = "viewer
 
         config.refresh(cfg)
         return manual.options(cfg)
+
+    @app.get("/api/manual/guide")
+    def manual_guide(source: str, env: str | None = None, entity: str = "", session_id: int | None = None) -> dict:
+        from .. import manual
+
+        if source not in manual.DISCOVERY:
+            raise HTTPException(422, "fuente desconocida")
+        config.refresh(cfg)
+        return manual.guide(store, cfg, source, env, entity.strip(), session_id)
+
+    @app.post("/api/sessions/{session_id}/discover", dependencies=[Depends(require_viewer)])
+    async def manual_discover(session_id: int, body: Discover) -> dict:
+        """La guía trae índices, tablas, log groups o campos en vivo: corre la tool de descubrimiento como una
+        consulta tuya de la sesión (queda en el timeline y el conocimiento la guarda) y devuelve su resultado."""
+        from .. import manual
+
+        if body.source not in manual.DISCOVERY:
+            raise HTTPException(422, "fuente desconocida")
+        listing, describe = manual.DISCOVERY[body.source]
+        entity = body.entity.strip()
+        if body.what == "describe":
+            if not describe or not entity:
+                raise HTTPException(422, "indica el índice o la tabla")
+            tool = describe
+            args = {"index": entity} if body.source == "opensearch" else {"table": entity}
+            purpose = f"Guía: campos de {entity}"
+        elif body.what == "list":
+            tool = listing
+            if body.source == "opensearch":
+                pattern = entity.split("*")[0].rstrip("-_.") if entity else ""
+                if not pattern:
+                    raise HTTPException(422, "escribe el comienzo del índice (por ejemplo leads) para listar los que siguen")
+                args = {"pattern": pattern + "*"}
+            elif body.source == "mysql":
+                args = {"pattern": (entity.rstrip("%") + "%") if entity else "%"}
+            else:
+                args = {"search": entity} if entity else {}
+            purpose = "Guía: listar " + {"opensearch": "índices", "mysql": "tablas", "cloudwatch": "log groups"}[body.source]
+        else:
+            raise HTTPException(422, "what tiene que ser list o describe")
+        if body.env:
+            args["env"] = body.env
+        started = await launch(session_id, tool, args, purpose, run_mode="new", wait=True)
+        events = store.query_events(started["query_id"])
+        end = next((e for e in reversed(events) if e["type"] in ("query.finished", "query.failed")), None)
+        if end is None:
+            return {**started, "status": "running"}
+        if end["type"] == "query.failed":
+            raise HTTPException(422, str(end["payload"].get("error")))
+        result = end["payload"].get("result") or {}
+        return {**started, "status": "ok", "columns": result.get("columns", []), "rows": result.get("rows", [])[:500]}
 
     @app.post("/api/manual/validate", dependencies=[Depends(require_viewer)])
     async def manual_validate(body: ValidateQuery) -> dict:

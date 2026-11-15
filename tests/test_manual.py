@@ -314,3 +314,57 @@ def test_validate_cloudwatch_estimates_and_says_when_to_confirm(tmp_path, monkey
         assert validate(client, "cw_query", {"log_group": "a*", "query": "x", "start": "-1h"})["ok"] is False
         assert validate(client, "cw_query", {"log_group": "/g", "query": "x", "start": "-30d"})["ok"] is False
     store.close()
+
+
+# --- la guía del editor ----------------------------------------------------------------------------------------
+
+
+def test_guide_uses_knowledge_used_entities_templates_and_similar(env, monkeypatch):
+    mcp, rec, store, cfg, _ = env
+
+    async def mapping(self, method, path, body=None, timeout=60):
+        if path.endswith("_mapping"):
+            return {"leads-2026": {"mappings": {"properties": {"email": {"type": "keyword"},
+                                                               "source": {"properties": {"name": {"type": "keyword"}}}}}}}
+        if path.startswith("_cat/indices"):
+            return [{"index": "leads-2026", "health": "green", "docs.count": "3", "store.size": "1kb"}]
+        return {"took": 1, "hits": {"total": {"value": 0}, "hits": []}}
+
+    monkeypatch.setattr(backend.OpenSearchClient, "request", mapping)
+    call(mcp, "os_search", {"purpose": "buscar el lead", "env": "prod", "index": "leads-*", "size": 1})
+    with TestClient(create_app(store, cfg)) as client:
+        empty = client.get("/api/manual/guide", params={"source": "opensearch", "env": "prod", "entity": "leads-*"}).json()
+        assert empty["schema"] is None and {"name": "leads-*", "from": "consultado"} in empty["entities"]
+        assert [t["title"] for t in empty["templates"]["os_search"]][0] == "Buscar por un valor exacto"
+        assert empty["similar"]["os_search"][0]["purpose"] == "buscar el lead"
+        # «Traer campos en vivo»: corre os_mapping como consulta tuya y el conocimiento lo guarda.
+        live = client.post(f"/api/sessions/{rec.session_id}/discover", headers=H,
+                           json={"source": "opensearch", "env": "prod", "what": "describe", "entity": "leads-*"}).json()
+        assert live["status"] == "ok" and ["email", "keyword"] in live["rows"]
+        assert started(store, live["query_id"])["origin"] == "manual"
+        guided = client.get("/api/manual/guide", params={"source": "opensearch", "env": "prod", "entity": "leads-*"}).json()
+        assert guided["schema"]["entity"] == "leads-2026" and guided["schema"]["status"] == "verified"
+        assert {"name": "source.name", "type": "keyword"} in guided["schema"]["fields"]
+        listed = client.post(f"/api/sessions/{rec.session_id}/discover", headers=H,
+                             json={"source": "opensearch", "env": "prod", "what": "list", "entity": "leads-*"}).json()
+        assert listed["rows"][0][0] == "leads-2026"
+        assert client.post(f"/api/sessions/{rec.session_id}/discover", headers=H,
+                           json={"source": "opensearch", "env": "prod", "what": "list", "entity": ""}).status_code == 422
+        assert client.get("/api/manual/guide", params={"source": "x"}).status_code == 422
+
+
+def test_guide_mysql_schema_marks_indexed_columns(env):
+    _, _, store, cfg, _ = env
+    from casebook import manual as m
+
+    kenv = m.knowledge_env(cfg, "mysql", "prod")
+    store.knowledge.db.write(
+        source="mysql", environment=kenv, entity="lead", kind="schema", title="lead · schema",
+        content=json.dumps({"columns": [{"Field": "id", "Type": "bigint", "Key": "PRI"}, {"Field": "email", "Type": "varchar(255)", "Key": "MUL"}],
+                            "indexes": [{"name": "índices", "columns": ["key", "seq", "column", "non_unique"],
+                                         "rows": [["PRIMARY", 1, "id", 0], ["idx_email", 1, "email", 1]]}]}),
+        topics=[], evidence={"summary": "test"}, status="verified", reason="test")
+    g = m.guide(store, cfg, "mysql", "prod", "lead")
+    assert {"name": "lead", "from": "conocimiento"} in g["entities"]
+    email = next(f for f in g["schema"]["fields"] if f["name"] == "email")
+    assert email["indexes"] == ["idx_email"] and email["type"] == "varchar(255)"

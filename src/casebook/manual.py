@@ -398,3 +398,151 @@ async def validate(cfg: Config, tool: str, args: dict[str, Any], count: bool = F
         return {"ok": True}
     except (guards.GuardError, BackendError, ProviderError, ValueError, TypeError, KeyError) as exc:
         return {"ok": False, "error": str(exc) or type(exc).__name__}
+
+
+# --- la guía del editor: entidades, esquema, plantillas y consultas parecidas --------------------------------------
+
+# Plantillas genéricas por tool (no dependen del pack): los <marcadores> los completa el ingeniero.
+TEMPLATES: dict[str, list[dict[str, str]]] = {
+    "os_search": [
+        {"title": "Buscar por un valor exacto",
+         "text": '{\n  "query": { "term": { "<campo>": "<valor>" } },\n  "_source": ["<campo>"],\n  "size": 20\n}'},
+        {"title": "Valor exacto en un rango de fechas",
+         "text": '{\n  "query": {\n    "bool": {\n      "filter": [\n        { "term": { "<campo>": "<valor>" } },\n'
+                 '        { "range": { "<campo_fecha>": { "gte": "now-1d" } } }\n      ]\n    }\n  },\n'
+                 '  "sort": [{ "<campo_fecha>": "desc" }],\n  "size": 50\n}'},
+        {"title": "Contar por valor (agregación, sin documentos)",
+         "text": '{\n  "size": 0,\n  "query": { "term": { "<campo>": "<valor>" } },\n'
+                 '  "aggs": { "por_valor": { "terms": { "field": "<campo_agrupar>", "size": 20 } } }\n}'},
+    ],
+    "os_count": [
+        {"title": "Contar por un valor exacto", "text": '{\n  "query": { "term": { "<campo>": "<valor>" } }\n}'},
+    ],
+    "db_select": [
+        {"title": "Filas por una columna indexada",
+         "text": "SELECT <columnas>\nFROM <tabla>\nWHERE <columna_indexada> = <valor>\nORDER BY id DESC"},
+        {"title": "Contar por día (últimos 7)",
+         "text": "SELECT DATE(<columna_fecha>) AS dia, COUNT(*) AS total\nFROM <tabla>\n"
+                 "WHERE <columna_indexada> = <valor>\n  AND <columna_fecha> >= NOW() - INTERVAL 7 DAY\nGROUP BY dia\nORDER BY dia"},
+    ],
+    "cw_query": [
+        {"title": "Buscar un texto",
+         "text": "fields @timestamp, @message\n| filter @message like /<texto>/\n| sort @timestamp desc\n| limit 50"},
+        {"title": "Contar por hora",
+         "text": "filter @message like /<texto>/\n| stats count(*) as total by bin(1h)\n| sort bin(1h) asc"},
+        {"title": "Errores y excepciones",
+         "text": "fields @timestamp, @message\n| filter @message like /(?i)(error|exception)/\n| sort @timestamp desc\n| limit 100"},
+    ],
+}
+DISCOVERY = {"opensearch": ("os_indices", "os_mapping"), "mysql": ("db_tables", "db_describe"),
+             "cloudwatch": ("cw_log_groups", None)}
+
+
+def knowledge_env(cfg: Config, kind: str, env: str | None) -> str | None:
+    """El entorno con que el conocimiento guarda los esquemas de esa fuente (MySQL: host/base, como db_describe)."""
+    try:
+        key = _env(cfg, kind, env)
+    except Exception:  # noqa: BLE001 - sin entorno válido no hay conocimiento que buscar
+        return None
+    if kind == "mysql":
+        src = cfg.mysql[key]
+        return f"{src.environment or src.host}/{src.database}"
+    from . import config
+
+    return config.env_name(kind, key, getattr(cfg, kind)[key])
+
+
+def _entries(store: Store, source: str, environment: str, limit: int = 50) -> list[dict[str, Any]]:
+    try:
+        found = store.knowledge.db.search("", source=source, environment=environment, limit=limit)
+    except Exception:  # noqa: BLE001 - sin knowledge.db la guía sigue con lo demás
+        return []
+    return found["entries"]
+
+
+def _read(store: Store, entry_id: int) -> dict[str, Any] | None:
+    try:
+        return store.knowledge.db.read(entry_id)
+    except Exception:  # noqa: BLE001
+        return None
+
+
+def guide(store: Store, cfg: Config, kind: str, env: str | None, entity: str = "",
+          session_id: int | None = None) -> dict[str, Any]:
+    """Lo que muestra el panel de guía para una fuente, un entorno y (opcional) una entidad."""
+    import fnmatch
+
+    tools = {"opensearch": ["os_search", "os_count"], "mysql": ["db_select"], "cloudwatch": ["cw_query"]}[kind]
+    kenv = knowledge_env(cfg, kind, env)
+    entries = _entries(store, kind, kenv) if kenv else []
+
+    # Entidades conocidas: las del conocimiento y las que ya se consultaron en cualquier sesión.
+    entities: dict[str, str] = {}
+    for e in entries:
+        if e["kind"] in ("mapping", "schema"):
+            entities.setdefault(e["entity"], "conocimiento")
+        elif e["kind"] == "catalog":
+            entry = _read(store, e["id"])
+            try:
+                for table in json.loads(entry["content"]).get("tables", [])[:200] if entry else []:
+                    entities.setdefault(table, "catálogo")
+            except (ValueError, AttributeError):
+                pass
+    key = {"opensearch": "index", "cloudwatch": "log_group"}.get(kind)
+    if key:
+        for name in store.used_entities(tools, key, env):
+            entities.setdefault(name, "consultado")
+
+    # El esquema de la entidad elegida (OpenSearch: el mapping de un índice concreto que matchee el patrón).
+    schema = None
+    if entity:
+        wanted = "mapping" if kind == "opensearch" else "schema" if kind == "mysql" else None
+        candidates = [e for e in entries if e["kind"] == wanted and (
+            e["entity"] == entity or (kind == "opensearch" and fnmatch.fnmatch(e["entity"], entity)))]
+        if candidates:
+            exact = next((e for e in candidates if e["entity"] == entity), candidates[0])
+            entry = _read(store, exact["id"])
+            if entry:
+                schema = _schema_of(kind, entry)
+
+    templates = {tool: TEMPLATES.get(tool, []) for tool in tools}
+    for e in entries:  # consultas de ejemplo guardadas en el conocimiento (knowledge_record kind=query)
+        if e["kind"] == "query" and (not entity or e["entity"] == entity or entity in e["entity"]):
+            entry = _read(store, e["id"])
+            if entry:
+                for tool in tools:
+                    templates[tool].append({"title": entry["title"], "text": entry["content"],
+                                            "from": "conocimiento", "status": entry["status"]})
+                    break
+
+    similar = {}
+    if entity:
+        for tool in tools:
+            similar[tool] = store.similar_queries(tool, key or "", entity, limit=6)
+    listing, describe = DISCOVERY[kind]
+    return {
+        "source": kind, "env": env, "entity": entity,
+        "entities": [{"name": n, "from": f} for n, f in sorted(entities.items())][:300],
+        "schema": schema, "templates": templates, "similar": similar,
+        "discover": {"list": listing, "describe": describe},
+    }
+
+
+def _schema_of(kind: str, entry: dict[str, Any]) -> dict[str, Any] | None:
+    try:
+        content = json.loads(entry["content"])
+    except ValueError:
+        return None
+    meta = {"entity": entry["entity"], "status": entry["status"], "verified_at": entry.get("verified_at"),
+            "entry_id": entry["id"]}
+    if kind == "opensearch":
+        return {**meta, "fields": [{"name": k, "type": v} for k, v in sorted((content.get("fields") or {}).items())]}
+    columns = content.get("columns") or []
+    indexed: dict[str, list[str]] = {}
+    for table in content.get("indexes") or []:
+        cols = table.get("columns", [])
+        for row in table.get("rows", []):
+            item = dict(zip(cols, row))
+            indexed.setdefault(str(item.get("column")), []).append(str(item.get("key")))
+    return {**meta, "fields": [{"name": c.get("Field"), "type": c.get("Type"), "key": c.get("Key") or "",
+                                "indexes": indexed.get(str(c.get("Field")), [])} for c in columns]}

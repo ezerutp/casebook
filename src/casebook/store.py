@@ -214,6 +214,18 @@ class Store:
                 pinned[r["query_id"]] = None
         return list(pinned)
 
+    def used_entities(self, tools: list[str], key: str, env: str | None, limit: int = 200) -> list[str]:
+        """Índices o log groups (params.<key>) ya consultados con esas tools en ese entorno, los más usados primero."""
+        marks = ",".join("?" * len(tools))
+        rows = self._conn.execute(
+            f"""SELECT json_extract(payload, '$.params.{key}') AS name, COUNT(*) AS n FROM events
+                WHERE type = 'query.started' AND json_extract(payload, '$.tool') IN ({marks})
+                  AND (? IS NULL OR json_extract(payload, '$.params.env') = ?) AND name IS NOT NULL
+                GROUP BY name ORDER BY n DESC LIMIT ?""",
+            (*tools, env, env, limit),
+        ).fetchall()
+        return [r["name"] for r in rows]
+
     def similar_queries(self, tool: str, entity_key: str, entity: str, exclude_session: int | None = None,
                         limit: int = 8) -> list[dict[str, Any]]:
         """Consultas que ya funcionaron con la misma tool sobre la misma entidad (índice, log group o tabla en el
